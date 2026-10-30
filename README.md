@@ -15,7 +15,7 @@ npm start
 ```
 
 Abra **http://127.0.0.1:3000** no mesmo computador que executa o servidor.
-O primeiro acesso apresenta o cadastro da equipe. Não existe senha padrão.
+O primeiro acesso apresenta o cadastro da equipe. Não existe senha padrão. As senhas do portal aceitam de 6 a 200 caracteres, sem exigência de símbolos ou letras maiúsculas.
 Esse cadastro só funciona por conexão local e é desativado após a primeira conta.
 
 1. Cadastre a equipe responsável.
