@@ -1,0 +1,31 @@
+CLUBE MAKER 3D — COMO TESTAR NO SEU COMPUTADOR
+
+1. Extraia o ZIP inteiro. Não execute de dentro do arquivo compactado.
+2. Instale Node.js 24 LTS ou superior, disponível em https://nodejs.org.
+3. No Windows, dê dois cliques em iniciar-windows.bat.
+   O navegador abrirá http://127.0.0.1:3000.
+   Mantenha a janela do servidor aberta enquanto usa o portal.
+
+No Mac/Linux, você também pode abrir o Terminal na pasta do projeto e executar:
+  node server.mjs
+Depois abra http://127.0.0.1:3000 no navegador.
+
+PRIMEIRO ACESSO
+Crie seu nome, e-mail e senha da equipe. Não existe usuário ou senha padrão.
+Para testar o lado da família:
+- Cadastre uma família na área Famílias.
+- Clique em Gerar convite e escolha Responsável.
+- Copie o convite e abra em uma janela anônima do navegador.
+- Crie a conta da família. Envie uma ideia para avaliação.
+- Volte à janela da equipe para preparar o orçamento.
+- Na janela da família, aprove e acompanhe a fila.
+
+Os dados são salvos na pasta data, criada no seu computador na primeira execução.
+Não apague essa pasta se quiser manter os cadastros e projetos.
+O projeto vem sem contas e sem projetos fictícios.
+O e-mail é usado apenas para entrar; nenhum e-mail ou pagamento real é enviado.
+
+Este é um teste local: o endereço e os convites só funcionam neste computador.
+Não há site publicado nem conexão com a impressora.
+Se a porta 3000 já estiver ocupada, encerre a outra aplicação ou consulte README.md.
+Veja README.md para instruções completas e docs/REGRAS_DO_MVP.md para as regras.
