@@ -6,10 +6,11 @@ famílias e adultos iniciantes.
 
 ## Executar
 
-Requer **Node.js 24 ou superior**. Não há dependências de execução para instalar.
+Requer **Node.js 24 ou superior**. Execute `npm ci` para instalar as dependências com as versões fixadas.
 
 ```bash
 cd clube-maker-3d
+npm ci
 npm start
 ```
 
@@ -83,6 +84,36 @@ node scripts/browser-smoke.mjs
 O script usa uma base temporária e a porta 3180. As capturas ficam em
 `docs/previews/`. Não é uma dependência do portal.
 
+## Supabase e publicação na VPS
+
+O código suporta dois modos: SQLite/local para teste no computador e
+PostgreSQL + Supabase Storage para produção. A interface e as regras de negócio
+são as mesmas. A autenticação continua no backend do clube, com sessões HttpOnly;
+ela não reutiliza as contas do Emersoft nem altera o Supabase Auth desse projeto.
+
+Destino definido: **https://maker3d.emersol.ai**, VPS Plesk **185.215.180.60**.
+Projeto Supabase: **Emersoft**, referência `hzsuckglbihyraaotzba`.
+A migração `20261030181544_maker3d_private_schema_and_storage` já foi aplicada:
+11 tabelas no schema privado `maker3d`, RLS habilitado, papel dedicado
+`maker3d_app` ainda sem login e bucket privado `maker3d-projects`.
+As tabelas dos demais sistemas não foram modificadas.
+
+**Estado:** banco preparado; implantação na VPS e teste ponta a ponta com Storage
+real ainda dependem do agente com acesso ao servidor e das credenciais de runtime.
+Nenhuma credencial de produção está neste repositório. Não reaplique a migração.
+
+- [Prompt para o agente do Plesk](docs/PROMPT_PLESK.md)
+- [.env.example](.env.example): nomes das variáveis, sem segredos.
+- [deploy/compose.yml](deploy/compose.yml): serviço isolado em `127.0.0.1:3183`.
+- [deploy/Dockerfile](deploy/Dockerfile): Node 24, usuário sem privilégios e healthcheck.
+- `npm run test:postgres`: testes com PostgreSQL embarcado PGlite e papel dedicado.
+
+A aplicação recusa iniciar em produção com SQLite, Storage local, usuário de banco
+compartilhado ou cookies sem HTTPS. O acesso do frontend é sempre via backend;
+`anon` e `authenticated` não têm acesso ao schema privado. Aprovações e mudanças
+de etapa são transacionais; um bloqueio no banco serializa escritas entre instâncias.
+Os arquivos só são entregues depois da autorização de família/equipe no servidor.
+
 ## Configuração de execução
 
 | Variável | Padrão | Uso |
@@ -108,18 +139,19 @@ antes de expor o serviço. Esta versão **não foi publicada na internet**.
   O onboarding inicial e a gestão dos convites são feitos pela equipe.
 - A implantação para uso real das dez famílias, a recuperação de conta e a rotina
   operacional de backup são próximos passos; o servidor atual é uma entrega local.
-- O SQLite atende ao piloto em uma única instância. Não executar múltiplas instâncias
-  com cópias independentes do banco.
+- O SQLite serve para testes locais; em produção, PostgreSQL centraliza os dados.
+  O import de cadastros criados em computadores locais não é automático.
 - A revisão técnica de modelos e a adequação física das peças continuam com a equipe.
 
 ## Organização
 
-- `server.mjs`: servidor HTTP, autenticação, autorização, SQLite e armazenamento.
+- `server.mjs`: servidor HTTP, autenticação, autorização e operações transacionais.
+- `db.mjs` e `storage.mjs`: adaptadores PostgreSQL/SQLite e Supabase/local.
 - `domain.mjs`: regras de período, alocação de horas e acerto de consumo.
 - `public/`: interface, estilos responsivos e ilustração vetorial original.
 - `test/`: testes de domínio e integração.
 - `scripts/browser-smoke.mjs`: validação opcional em navegador real.
 
-A implementação não depende de Supabase ou serviços pagos. O fluxo de publicação
+O modo de produção usa o projeto Supabase escolhido pelo usuário. O modo local mantém SQLite. O fluxo de publicação
 Sites não estava disponível neste ambiente porque seus helpers e starter não
 estavam instalados; por isso foi entregue um projeto Node local completo.
