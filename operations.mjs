@@ -12,7 +12,7 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
  const requestKey=b=>str(b.requestKey,'Identificação do lançamento',100);
  const accessRole=value=>{if(!['admin','finance','operator'].includes(value))fail('Função inválida.');return value;};
  async function family(id){const f=await one('SELECT * FROM families WHERE id=?',integer(id,'Família',1,2147483647));if(!f)fail('Família não encontrada.',404);return f;}
- function ownFamily(u){need(u.role==='guardian'&&Boolean(u.family_id));return u.family_id;}
+ function ownFamily(u){need(['guardian','learner'].includes(u.role)&&Boolean(u.family_id));return u.family_id;}
  async function addEntry({scope='club',familyId=null,kind,category,description,cents,entryDate=localDate(),sourceKey=null,createdBy=null,key=null}){
   return Number((await run('INSERT INTO cash_entries(scope,family_id,kind,category,description,cents,entry_date,source_key,created_by,created,request_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)',scope,familyId,kind,category,description,cents,entryDate,sourceKey,createdBy,now(),key)).lastInsertRowid);
  }
@@ -109,25 +109,34 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const from=date(url.searchParams.get('from')||period()+'-01'),to=date(url.searchParams.get('to')||monthEnd());if(from>to)fail('A data inicial deve anteceder a final.');
    let rows;
    if(scope==='club')rows=await all("SELECT c.*,f.name family_name,u.name author FROM cash_entries c LEFT JOIN families f ON f.id=c.family_id LEFT JOIN users u ON u.id=c.created_by WHERE c.scope='club' ORDER BY c.entry_date DESC,c.id DESC");
-   else rows=await all("SELECT c.id,c.scope,c.family_id,CASE WHEN c.scope='club' THEN 'expense' ELSE c.kind END kind,c.category,c.description,c.cents,c.entry_date,c.source_key,c.created,c.voided_at,c.void_reason FROM cash_entries c WHERE c.family_id=? AND (c.scope='family' OR (c.scope='club' AND c.kind='income')) ORDER BY c.entry_date DESC,c.id DESC",fid);
+   else rows=await all("SELECT c.id,c.scope,c.family_id,c.created_by,CASE WHEN c.scope='club' THEN 'expense' ELSE c.kind END kind,c.category,c.description,c.cents,c.entry_date,c.source_key,c.created,c.voided_at,c.void_reason,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'family' ELSE COALESCE('p:' || a.participant_id,'u:' || a.user_id,'u:' || c.created_by,'family') END participant_key,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'Família' ELSE COALESCE(p.name,person.name,author.name,'Família') END participant_name FROM cash_entries c LEFT JOIN cash_attributions a ON a.entry_id=c.id LEFT JOIN participants p ON p.id=a.participant_id LEFT JOIN users person ON person.id=a.user_id LEFT JOIN users author ON author.id=c.created_by WHERE c.family_id=? AND (c.scope='family' OR (c.scope='club' AND c.kind='income')) ORDER BY c.entry_date DESC,c.id DESC",fid);
    const within=rows.filter(r=>r.entry_date>=from&&r.entry_date<=to),live=within.filter(r=>!r.voided_at),sum=kind=>live.filter(r=>r.kind===kind).reduce((n,r)=>n+r.cents,0);
    const income=sum('income'),expenses=sum('expense'),investments=sum('investment'),opening=rows.filter(r=>!r.voided_at&&r.entry_date<from).reduce((n,r)=>n+(r.kind==='expense'?-r.cents:r.cents),0);
-   json(res,{scope,from,to,entries:within,totals:{income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses},canEdit:true});return true;
+   const people=scope==='family'?await all("SELECT 'u:' || id key,name,role FROM users WHERE family_id=? UNION ALL SELECT 'p:' || id key,name,'participant' role FROM participants WHERE family_id=?",fid,fid):[];
+   json(res,{scope,from,to,entries:within.map(e=>({...e,canVoid:!e.voided_at&&(scope==='club'||(e.scope==='family'&&(u.role==='guardian'||e.created_by===u.id)))})),people,actorKey:'u:'+u.id,guardian:u.role==='guardian',totals:{income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses},canEdit:true});return true;
   }
   if(path==='/api/finance/entries'&&method==='POST'){
    const b=await body(req),scope=b.scope;if(!['club','family'].includes(scope))fail('Área financeira inválida.');
    const fid=scope==='family'?ownFamily(u):null;if(scope==='club')need(canFinance(u));
    const key=requestKey(b);if(await one('SELECT id FROM cash_entries WHERE request_key=?',key)){json(res,{ok:true,duplicate:true});return true;}
    const kinds=scope==='club'?['income','expense','investment']:['income','expense'];if(!kinds.includes(b.kind))fail('Tipo inválido.');
-   const categories=scope==='club'?{income:['other_income'],expense:['equipment','maintenance','rent','energy','services','other_expense'],investment:['capital']}:{income:['sales','other_income'],expense:['supplies','shipping','other_expense']};
+   const categories=scope==='club'?{income:['other_income'],expense:['equipment','maintenance','rent','energy','services','other_expense'],investment:['capital']}:{income:['sales','allowance','gift','other_income'],expense:['supplies','shipping','purchase','other_expense']};
    if(!categories[b.kind].includes(b.category))fail('Categoria inválida. Pagamentos de participantes são registrados na família ou no projeto.');
    const entryDate=date(b.entryDate);if(entryDate>localDate())fail('Registre somente movimentações realizadas.');
-   const id=await addEntry({scope,familyId:fid,kind:b.kind,category:b.category,description:str(b.description,'Descrição',200),cents:integer(b.cents,'Valor',1,100000000),entryDate,createdBy:u.id,key});await audit(u,'finance.entry.create',id);json(res,{id});return true;
+   const id=await addEntry({scope,familyId:fid,kind:b.kind,category:b.category,description:str(b.description,'Descrição',200),cents:integer(b.cents,'Valor',1,100000000),entryDate,createdBy:u.id,key});if(scope==='family'){
+    const key=u.role==='learner'?'u:'+u.id:(b.participantKey||'u:'+u.id);let participantId=null,userId=null;
+    if(key!=='family'){
+     const match=typeof key==='string'&&key.match(/^([up]):(\d+)$/);if(!match)fail('Participante inválido.');
+     const target=await one('SELECT id FROM '+(match[1]==='p'?'participants':'users')+' WHERE id=? AND family_id=?',Number(match[2]),fid);need(Boolean(target));if(match[1]==='p')participantId=target.id;else userId=target.id;
+    }
+    await run('INSERT INTO cash_attributions(entry_id,participant_id,user_id) VALUES(?,?,?)',id,participantId,userId);
+   }
+   await audit(u,'finance.entry.create',id);json(res,{id});return true;
   }
   const voidEntry=path.match(/^\/api\/finance\/entries\/(\d+)\/void$/);
   if(voidEntry&&method==='POST'){
    const e=await one('SELECT * FROM cash_entries WHERE id=?',Number(voidEntry[1]));if(!e)fail('Lançamento não encontrado.',404);
-   if(e.scope==='club')need(canFinance(u));else need(u.role==='guardian'&&u.family_id===e.family_id);
+   if(e.scope==='club')need(canFinance(u));else need(u.family_id===e.family_id&&(u.role==='guardian'||(u.role==='learner'&&e.created_by===u.id)));
    if(e.voided_at)fail('Este lançamento já foi estornado.');
    const stock=await one('SELECT s.id FROM stock_lots s WHERE s.entry_id=?',e.id);if(stock&&await one('SELECT id FROM stock_uses WHERE lot_id=?',stock.id))fail('Este filamento já teve baixa. Registre um ajuste financeiro separado para preservar o estoque.');
    const b=await body(req);await run('UPDATE cash_entries SET voided_at=?,void_reason=? WHERE id=?',now(),str(b.reason,'Motivo do estorno',200),e.id);

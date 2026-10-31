@@ -90,7 +90,7 @@ test('caixa, estoque, benefícios, convites e permissões de cada função',asyn
   await g('/finance/entries',{scope:'family',kind:'expense',category:'shipping',description:'Entrega',cents:2000,entryDate:today,requestKey:randomUUID()});
   const own=await g('/finance'+range+'&scope=family');assert.equal(own.totals.income,30000);assert.equal(own.totals.expenses,15200);assert.equal(own.totals.result,14800);
   assert.ok(!(await admin('/finance'+range)).entries.some(e=>e.description==='Venda de chaveiros'));
-  await admin('/finance'+range+'&scope=family',undefined,403);await kid('/finance'+range+'&scope=family',undefined,403);
+  await admin('/finance'+range+'&scope=family',undefined,403);assert.equal((await kid('/finance'+range+'&scope=family')).scope,'family');
   await other(`/finance/entries/${entry.id}/void`,{reason:'Outro'},403);await admin(`/finance/entries/${entry.id}/void`,{reason:'Outro'},403);
   await g(`/finance/entries/${entry.id}/void`,{reason:'Venda cancelada'});
   const reversed=await g('/finance'+range+'&scope=family');assert.equal(reversed.totals.income,0);assert.ok(reversed.entries.find(x=>x.id===entry.id).voided_at);
@@ -132,4 +132,20 @@ test('caixa, estoque, benefícios, convites e permissões de cada função',asyn
   await admin('/team/'+finance.id,{enabled:true,accessRole:'operator'});await fin('/finance'+range,undefined,401);await fin('/login',{email:finance.email,password:pass});await fin('/finance'+range,undefined,403);
   await admin('/team/'+operator.id,{enabled:false});await op('/dashboard',undefined,401);await op('/login',{email:operator.email,password:pass},403);
  });
+ await t.test('aprendiz participa do caixa compartilhado; responsável classifica por participante',async()=>{
+  const student=(await kid('/session')).user,clubBefore=(await admin('/finance'+range)).totals;
+  const profile=await g('/dependents',{familyId:f.id,name:'Ana',ageGroup:'child'});
+  const sale=await kid('/finance/entries',{scope:'family',kind:'income',category:'sales',description:'Venda do participante',cents:1000,entryDate:today,participantKey:'u:'+(await g('/session')).user.id,requestKey:randomUUID()});
+  const shared=await g('/finance'+range+'&scope=family'),entry=shared.entries.find(e=>e.id===sale.id);assert.equal(entry.participant_key,'u:'+student.id);assert.equal(entry.participant_name,student.name);
+  await kid('/finance/entries',{scope:'family',kind:'expense',category:'supplies',description:'Embalagem do participante',cents:200,entryDate:today,requestKey:randomUUID()});
+  const forProfile=await g('/finance/entries',{scope:'family',kind:'income',category:'allowance',description:'Mesada da Ana',cents:500,entryDate:today,participantKey:'p:'+profile.id,requestKey:randomUUID()});
+  const familyView=await kid('/finance'+range+'&scope=family');assert.ok(familyView.entries.some(e=>e.id===forProfile.id&&e.participant_name==='Ana'));assert.equal(familyView.entries.find(e=>e.id===forProfile.id).canVoid,false);
+  await kid(`/finance/entries/${forProfile.id}/void`,{reason:'Não é meu'},403);
+  await g(`/finance/entries/${sale.id}/void`,{reason:'Correção pelo responsável'});
+  assert.ok((await kid('/finance'+range+'&scope=family')).entries.find(e=>e.id===sale.id).voided_at);
+  await kid('/finance'+range+'&scope=club',undefined,403);assert.ok(!(await other('/finance'+range+'&scope=family')).entries.some(e=>e.description==='Venda do participante'));
+  await g('/finance/entries',{scope:'family',kind:'income',category:'gift',description:'Pessoa de outra família',cents:100,entryDate:today,participantKey:'u:'+(await other('/session')).user.id,requestKey:randomUUID()},403);
+  assert.deepEqual((await admin('/finance'+range)).totals,clubBefore);
+ });
+
 });

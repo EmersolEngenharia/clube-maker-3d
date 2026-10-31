@@ -1,8 +1,16 @@
 # Clube Maker 3D
 
-Portal do clube da Emersol, em Itumbiara–GO — versão 0.4.1.
+Portal do clube da Emersol, em Itumbiara–GO — versão 0.5.0.
 Interface em português, adaptada para computador e celular, com foco em crianças,
 famílias e adultos iniciantes.
+
+## Atualização 0.5.0 — dashboard financeiro e matemática em família
+
+Resumo compacto no topo, lançamentos com busca, filtros, ordenação, paginação e
+CSV dos resultados filtrados. Responsáveis e aprendizes compartilham o financeiro
+da família, identificando o participante em cada registro. Há explicações e uma
+calculadora de venda, custos, lucro e margem que não cria lançamentos reais.
+Veja [o guia de uso](docs/FINANCEIRO_DIDATICO.md).
 
 ## Atualização 0.4.1 — desempenho
 
