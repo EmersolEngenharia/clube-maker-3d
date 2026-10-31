@@ -1,8 +1,24 @@
 # Clube Maker 3D
 
-Primeira implementação funcional do portal do clube da Emersol, em Itumbiara–GO.
+Portal do clube da Emersol, em Itumbiara–GO — versão 0.3.0.
 Interface em português, adaptada para computador e celular, com foco em crianças,
 famílias e adultos iniciantes.
+
+## Atualização 0.3.0
+
+A versão adiciona cinco temas por usuário, avatar/foto, gestão editável de famílias
+e dependentes, equipe operacional, convites de inscrição de novas famílias,
+conteúdos para divulgação com autorização e revisão, bateria da franquia familiar
+e extrato CSV. O painel usa consultas em lote, respostas resumidas e cache HTTP
+com Brotli/Gzip para a interface.
+
+- [Auditoria, resultados, limites e próximos recursos](docs/AUDITORIA_0.3.md)
+- [Guia de atualização e validação](docs/ATUALIZACAO_0.3.md)
+
+**Esta atualização foi validada localmente. A migração adicional e a versão 0.3.0
+não foram aplicadas/publicadas no ambiente de produção.** A publicação automática
+em redes sociais será uma integração futura; atualmente o portal organiza e revisa
+os conteúdos com acesso privado.
 
 ## Executar
 
@@ -148,6 +164,8 @@ antes de expor o serviço. Esta versão **não foi publicada na internet**.
 - `server.mjs`: servidor HTTP, autenticação, autorização e operações transacionais.
 - `db.mjs` e `storage.mjs`: adaptadores PostgreSQL/SQLite e Supabase/local.
 - `domain.mjs`: regras de período, alocação de horas e acerto de consumo.
+- `features.mjs`: perfis, equipe, edição de famílias, inscrição e publicações privadas.
+- `public/features.js` e `public/themes.css`: telas dos recursos novos e temas.
 - `public/`: interface, estilos responsivos e ilustração vetorial original.
 - `test/`: testes de domínio e integração.
 - `scripts/browser-smoke.mjs`: validação opcional em navegador real.

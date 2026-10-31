@@ -89,3 +89,20 @@ Cada família vê apenas seus projetos e arquivos. A fila das outras famílias m
 somente número do pedido, etapa e duração estimada. Não publica nomes de crianças.
 A equipe confere a máquina presencialmente. Registrar o início no portal não
 aciona a impressora.
+
+
+## Atualização 0.3.0: família, equipe e divulgação
+
+A franquia é compartilhada pela família e aparece nos perfis vinculados. A equipe
+pode editar a franquia de uma família, desde que não a reduza abaixo do uso e das
+reservas atuais. O plano não muda automaticamente orçamentos já aprovados.
+
+O acesso operacional à equipe é adicional ao vínculo familiar. Apenas o
+administrador concede ou remove esse acesso. Ser da equipe não autoriza aprovar
+orçamento em nome do responsável de outra família.
+
+Conteúdos de aprendizes exigem autorização de um responsável da família e revisão
+da equipe. Alterações removem a autorização anterior. O estado aprovado significa
+que o conteúdo está preparado para divulgação: o portal não publica nas redes.
+Fotos, vídeos e perfis permanecem privados, acessíveis apenas aos usuários
+expressamente autorizados nas rotas do backend.

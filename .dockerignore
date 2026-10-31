@@ -6,3 +6,6 @@ data
 *.log
 *.zip
 docs/previews
+
+work
+supabase/.temp

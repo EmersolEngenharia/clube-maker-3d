@@ -22,3 +22,26 @@ export function balance(projects, allowance, month) {
   }
   return { allowance, used, held, available: Math.max(0, allowance-used-held), period: month };
 }
+
+// Costs use the approved rate snapshots and the existing budget ceiling.
+// The accounting month remains the month in which the family approved the project.
+export function monthlyUsage(projects, allowance, month) {
+  const result={...balance(projects,allowance,month),extraMinutes:0,extraCost:0,materialCost:0,grams:0,pendingExtra:0,pendingMaterial:0,pendingExtraMinutes:0,actualMinutes:0};
+  for(const p of projects){
+    if(p.period!==month)continue;
+    if(reserved.includes(p.status)){
+      result.pendingExtraMinutes+=Math.max(0,p.minutes-p.included);
+      result.pendingExtra+=Math.round(Math.max(0,p.minutes-p.included)*p.extra_rate/60);
+      result.pendingMaterial+=Math.round(p.grams*p.material_rate/1000);
+    }
+    if(consumed.includes(p.status)){
+      const extra=Math.max(0,Math.min(p.actual_minutes??p.minutes,p.minutes)-p.used);
+      result.extraMinutes+=extra;
+      result.extraCost+=Math.round(extra*p.extra_rate/60);
+      result.materialCost+=Math.round(Math.min(p.actual_grams??p.grams,p.grams)*p.material_rate/1000);
+      result.grams+=p.actual_grams??p.grams;
+      result.actualMinutes+=p.actual_minutes??p.minutes;
+    }
+  }
+  return {...result,total:result.extraCost+result.materialCost};
+}
