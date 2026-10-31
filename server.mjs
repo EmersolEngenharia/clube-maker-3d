@@ -160,7 +160,7 @@ async function handle(req,res){
     fail('Ação não encontrada.',404);
 }
 const features=createFeatures({db,storage,fail,str,integer,body,json,config,password,creds,login});
-const staticFiles=new Map(Object.entries({'/':'index.html','/app.js':'app.js','/features.js':'features.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg'}).map(([url,file])=>{const bytes=readFileSync(join(root,'public',file));return [url,{bytes,gzip:gzipSync(bytes),br:brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:5}}),etag:'"'+hash(bytes)+'"',type:({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)]}];}));
+const staticFiles=new Map(Object.entries({'/':'index.html','/app.js':'app.js','/features.js':'features.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>{const bytes=readFileSync(join(root,'public',file));return [url,{bytes,gzip:gzipSync(bytes),br:brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:5}}),etag:'"'+hash(bytes)+'"',type:({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)]}];}));
 const cleanup=setInterval(()=>{for(const [k,v]of attempts)if(v.until<Date.now())attempts.delete(k);},60000);cleanup.unref();
 const server=http.createServer(async(req,res)=>{
   try {
