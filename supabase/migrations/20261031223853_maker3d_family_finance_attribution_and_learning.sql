@@ -1,0 +1,10 @@
+SET search_path = maker3d, pg_catalog;
+CREATE TABLE IF NOT EXISTS cash_attributions(entry_id INTEGER PRIMARY KEY REFERENCES cash_entries(id),participant_id INTEGER REFERENCES participants(id),user_id INTEGER REFERENCES users(id),CHECK(participant_id IS NULL OR user_id IS NULL));
+CREATE INDEX IF NOT EXISTS maker_cash_attribution_participant ON cash_attributions(participant_id);
+CREATE INDEX IF NOT EXISTS maker_cash_attribution_user ON cash_attributions(user_id);
+ALTER TABLE cash_attributions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maker3d_backend ON cash_attributions;
+CREATE POLICY maker3d_backend ON cash_attributions TO maker3d_app USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON cash_attributions TO maker3d_app;
+REVOKE ALL ON cash_attributions FROM PUBLIC, anon, authenticated;
+RESET search_path;

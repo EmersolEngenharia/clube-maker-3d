@@ -11,6 +11,7 @@ CSV dos resultados filtrados. Responsáveis e aprendizes compartilham o financei
 da família, identificando o participante em cada registro. Há explicações e uma
 calculadora de venda, custos, lucro e margem que não cria lançamentos reais.
 Veja [o guia de uso](docs/FINANCEIRO_DIDATICO.md).
+**Publicada em 31/10/2026**; [registro e rollback](docs/PUBLICACAO_0.5.md).
 
 ## Atualização 0.4.1 — desempenho
 
