@@ -21,6 +21,13 @@ Consulte [o registro da publicação](docs/PUBLICACAO_0.3.md). A publicação au
 em redes sociais será uma integração futura; atualmente o portal organiza e revisa
 os conteúdos com acesso privado.
 
+## Publicar uma atualização
+
+Leia primeiro [o guia rápido de publicação](docs/DEPLOY_RAPIDO.md). Ele contém o acesso
+validado, scripts reutilizáveis, verificações e rollback. A identidade **Clube Maker 3D
+Emersol** já está online; veja [o registro da publicação](docs/PUBLICACAO_MARCA.md).
+`AGENTS.md` orienta as próximas sessões a começar pelo guia.
+
 ## Executar
 
 Requer **Node.js 24 ou superior**. Execute `npm ci` para instalar as dependências com as versões fixadas.
