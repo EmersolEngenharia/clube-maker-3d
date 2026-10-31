@@ -82,7 +82,9 @@ acesso. Colaboradores sem família removidos da equipe perdem acesso ao portal.
 
 ## Atualização em produção
 
-A entrega é local. Não foi modificada a VPS nem o Supabase remoto.
+A versão 0.4.0 foi publicada em 31/10/2026 e o banco remoto foi atualizado.
+Confira `docs/PUBLICACAO_0.4.md` antes de executar os passos abaixo. Não reaplique
+a migração já registrada em produção.
 
 1. Faça backup e confirme a versão atualmente instalada.
 2. Se a migração de perfis 0.3 ainda não estiver aplicada, aplique-a primeiro.

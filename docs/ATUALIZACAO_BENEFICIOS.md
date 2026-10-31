@@ -1,6 +1,6 @@
 # Cupons, horas e WhatsApp
 
-Atualização local, ainda não publicada na VPS.
+Registro da implementação inicial, incorporada à versão 0.4.0. Para o comportamento atual e a publicação, consulte ATUALIZACAO_0.4.md e PUBLICACAO_0.4.md.
 
 - Em Famílias, use **Dar cupom ou horas**. Horas são concedidas em minutos ao saldo compartilhado do mês atual (Brasília), expiram ao virar o mês e valem para novas aprovações. Não alteram orçamentos anteriores nem a franquia permanente.
 - Cupons oferecem desconto fixo em reais, são exclusivos de uma família, válidos no mês atual e de uso único. Para resgatar, informe código, valor original e valor efetivamente recebido em **Registrar pagamento**. O servidor confere o desconto. Isenção total permite valor recebido zero. Não afetam material ou pagamentos de projetos.

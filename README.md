@@ -19,8 +19,8 @@ famílias e adultos iniciantes.
   permitem cadastrar colaboradores sem vínculo com uma família.
 
 Veja [o guia completo e os passos para produção](docs/ATUALIZACAO_0.4.md).
-**A versão 0.4.0 foi implementada e validada localmente; não foi publicada na VPS
-nem aplicada ao Supabase remoto.**
+**Versão 0.4.0 publicada em https://maker3d.emersol.ai em 31/10/2026, com a atualização do banco aplicada.**
+Veja [o registro da publicação e rollback](docs/PUBLICACAO_0.4.md).
 
 ## Atualização 0.3.0
 
