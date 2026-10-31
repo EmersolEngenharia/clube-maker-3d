@@ -1,8 +1,26 @@
 # Clube Maker 3D
 
-Portal do clube da Emersol, em Itumbiara–GO — versão 0.3.0.
+Portal do clube da Emersol, em Itumbiara–GO — versão 0.4.0.
 Interface em português, adaptada para computador e celular, com foco em crianças,
 famílias e adultos iniciantes.
+
+## Atualização 0.4.0 — financeiro, estoque e acessos
+
+- Financeiro do clube: aportes separados de receitas, despesas, recebimentos,
+  saldo anterior/final, filtro de datas, exportação CSV e estorno com motivo.
+- Financeiro privado de cada família: despesas ao clube entram automaticamente;
+  responsáveis lançam vendas e outros custos e acompanham o resultado de caixa.
+- Compras de filamento alimentam caixa e estoque por lote; baixas em gramas,
+  fornecedor, custo por kg e valor do saldo. Baixas são registradas pela equipe.
+- Contatos dos responsáveis com e-mail e botão para WhatsApp na ficha da família.
+- Cupons e horas com validade configurável e histórico. Pagamentos têm resumo
+  automático de desconto, confirmação do recebido e opção de isenção total.
+- Administrador, financeiro e operador possuem permissões distintas. Convites
+  permitem cadastrar colaboradores sem vínculo com uma família.
+
+Veja [o guia completo e os passos para produção](docs/ATUALIZACAO_0.4.md).
+**A versão 0.4.0 foi implementada e validada localmente; não foi publicada na VPS
+nem aplicada ao Supabase remoto.**
 
 ## Atualização 0.3.0
 
@@ -164,6 +182,8 @@ antes de expor o serviço. Esta versão **não foi publicada na internet**.
 - `server.mjs`: servidor HTTP, autenticação, autorização e operações transacionais.
 - `db.mjs` e `storage.mjs`: adaptadores PostgreSQL/SQLite e Supabase/local.
 - `domain.mjs`: regras de período, alocação de horas e acerto de consumo.
+- `operations.mjs`, `permissions.mjs` e `quota.mjs`: financeiro, estoque, benefícios, funções e saldo de horas.
+- `public/operations.js`: telas dos novos recursos.
 - `features.mjs`: perfis, equipe, edição de famílias, inscrição e publicações privadas.
 - `public/features.js` e `public/themes.css`: telas dos recursos novos e temas.
 - `public/`: interface, estilos responsivos e ilustração vetorial original.

@@ -1,18 +1,19 @@
 import {randomBytes,createHash} from 'node:crypto';
 import {extname} from 'node:path';
 
-export const isTeam=u=>u?.role==='admin'||Boolean(u?.is_staff);
+import {isTeam,isAdmin,canOperate} from './permissions.mjs';
+export {isTeam} from './permissions.mjs';
 export const themes=['atelier','ocean','candy','space','contrast'];
 export const avatars=['robot','rocket','cat','dino','astronaut','flower','cube','star'];
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const now=()=>new Date().toISOString();
 
-export function createFeatures({db,storage,fail,str,integer,body,json,config,password,creds,login}){
+export function createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login}){
  const one=(q,...p)=>db.one(q,...p),all=(q,...p)=>db.all(q,...p),run=(q,...p)=>db.run(q,...p);
  const need=(condition,message='Você não tem permissão para esta ação.')=>{if(!condition)fail(message,403);};
  const audit=(u,action,target)=>run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,action,String(target),now());
  const optional=(v,label,max)=>v==null||v===''?'':str(v,label,max);
- async function familyAccess(id,u){need(isTeam(u)||(u.role==='guardian'&&u.family_id===id));const f=await one('SELECT * FROM families WHERE id=?',id);if(!f)fail('Família não encontrada.',404);return f;}
+ async function familyAccess(id,u){need(canOperate(u)||(u.role==='guardian'&&u.family_id===id));const f=await one('SELECT * FROM families WHERE id=?',id);if(!f)fail('Família não encontrada.',404);return f;}
  function preference(b){
   const theme=b.theme??'atelier',avatar=b.avatar??'robot',experience=b.experience??'guided';
   if(!themes.includes(theme)||!avatars.includes(avatar)||!['guided','compact'].includes(experience))fail('Preferências inválidas.');
@@ -66,7 +67,14 @@ export function createFeatures({db,storage,fail,str,integer,body,json,config,pas
  }
  async function route(req,res,path,method,u){
   if(path==='/api/profile'&&method==='POST'){
-   const b=await body(req);await savePreference(u.id,b);await run('UPDATE users SET name=? WHERE id=?',str(b.name,'Nome',80),u.id);
+   const b=await body(req);
+   if(u.role==='guardian'&&b.whatsapp!==undefined){
+    if(typeof b.whatsapp!=='string'||b.whatsapp.length>30||!/^[+\d\s().-]*$/.test(b.whatsapp))fail('WhatsApp inválido.');
+    let phone=b.whatsapp.replace(/\D/g,'');if(phone.length===10||phone.length===11)phone='55'+phone;
+    if(phone&&!/^[1-9]\d{9,14}$/.test(phone))fail('Informe o WhatsApp com DDD e código do país.');
+    await run('INSERT INTO guardian_contacts(user_id,whatsapp) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET whatsapp=excluded.whatsapp',u.id,phone);
+   }
+   await savePreference(u.id,b);await run('UPDATE users SET name=? WHERE id=?',str(b.name,'Nome',80),u.id);
    if(b.removePhoto===true)await run('UPDATE user_preferences SET photo_key=NULL,photo_mime=NULL WHERE user_id=?',u.id);
    json(res,{ok:true});return true;
   }
@@ -84,9 +92,8 @@ export function createFeatures({db,storage,fail,str,integer,body,json,config,pas
   const fam=path.match(/^\/api\/families\/(\d+)\/edit$/);
   if(fam&&method==='POST'){
    const id=Number(fam[1]),f=await familyAccess(id,u),b=await body(req);let plan=f.plan,allowance=f.allowance;
-   if(isTeam(u)){if(!['monthly','annual'].includes(b.plan))fail('Plano inválido.');plan=b.plan;allowance=integer(b.allowance,'Franquia em minutos',0,60000);
-    const usage=await all("SELECT period,SUM(CASE WHEN status IN ('queued','printing') THEN included WHEN status IN ('ready','completed') THEN used ELSE 0 END) committed FROM projects WHERE family_id=? GROUP BY period",id);
-    const {period}=await import('./domain.mjs');if(allowance<Number(usage.find(x=>x.period===period())?.committed||0))fail('A franquia não pode ficar abaixo das horas já usadas e reservadas neste mês.');
+   if(canOperate(u)){if(!['monthly','annual'].includes(b.plan))fail('Plano inválido.');plan=b.plan;allowance=integer(b.allowance,'Franquia em minutos',0,60000);
+    const balance=await quota.balance(id);if(allowance<balance.baseAllowance-balance.baseAvailable)fail('A franquia não pode ficar abaixo das horas da franquia já usadas e reservadas neste mês.');
    }
    await run('UPDATE families SET name=?,plan=?,allowance=? WHERE id=?',str(b.name,'Família',80),plan,allowance,id);await audit(u,'family.edit',id);json(res,{ok:true});return true;
   }
@@ -99,27 +106,17 @@ export function createFeatures({db,storage,fail,str,integer,body,json,config,pas
    await run('INSERT INTO participant_settings(participant_id,age_group,notes,active) VALUES(?,?,?,?) ON CONFLICT(participant_id) DO UPDATE SET age_group=excluded.age_group,notes=excluded.notes,active=excluded.active',id,age,notes,active);
    await audit(u,'dependent.edit',id);json(res,{id});return true;
   }
-  if(path==='/api/team'&&method==='GET'){
-   need(u.role==='admin');json(res,{members:await all('SELECT u.id,u.name,u.email,u.role,u.family_id,t.created FROM users u LEFT JOIN team_members t ON t.user_id=u.id WHERE u.role=? OR t.user_id IS NOT NULL','admin'),audit:await all('SELECT a.*,u.name FROM audit_log a JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 50')});return true;
-  }
   const member=path.match(/^\/api\/members\/(\d+)$/);
   if(member&&method==='POST'){
-   need(u.role==='admin');const id=Number(member[1]),b=await body(req),m=await one('SELECT * FROM users WHERE id=?',id);if(!m)fail('Membro não encontrado.',404);
+   need(isAdmin(u));const id=Number(member[1]),b=await body(req),m=await one('SELECT * FROM users WHERE id=?',id);if(!m)fail('Membro não encontrado.',404);
    await run('UPDATE users SET name=? WHERE id=?',str(b.name,'Nome',80),id);await audit(u,'member.rename',id);json(res,{ok:true});return true;
   }
-  const team=path.match(/^\/api\/team\/(\d+)$/);
-  if(team&&method==='POST'){
-   need(u.role==='admin');const id=Number(team[1]),b=await body(req),m=await one('SELECT * FROM users WHERE id=?',id);if(!m||m.role==='admin')fail('Escolha um participante da família.');
-   if(typeof b.enabled!=='boolean')fail('Informe a alteração de acesso.');
-   if(b.enabled)await run('INSERT INTO team_members(user_id,granted_by,created) VALUES(?,?,?) ON CONFLICT(user_id) DO NOTHING',id,u.id,now());else await run('DELETE FROM team_members WHERE user_id=?',id);
-   await run('DELETE FROM sessions WHERE user_id=?',id);await audit(u,b.enabled?'team.grant':'team.revoke',id);json(res,{ok:true});return true;
-  }
-  if(path==='/api/enrollment-invites'&&method==='GET'){need(isTeam(u));json(res,{invites:await all('SELECT token,label,expires,max_uses,uses,created FROM enrollment_invites ORDER BY created DESC LIMIT 50')});return true;}
+  if(path==='/api/enrollment-invites'&&method==='GET'){need(canOperate(u));json(res,{invites:await all('SELECT token,label,expires,max_uses,uses,created FROM enrollment_invites ORDER BY created DESC LIMIT 50')});return true;}
   if(path==='/api/enrollment-invites'&&method==='POST'){
-   need(isTeam(u));const b=await body(req),token=randomBytes(24).toString('hex'),expires=Date.now()+integer(b.days??7,'Validade',1,30)*86400000;
+   need(canOperate(u));const b=await body(req),token=randomBytes(24).toString('hex'),expires=Date.now()+integer(b.days??7,'Validade',1,30)*86400000;
    await run('INSERT INTO enrollment_invites(token,label,expires,max_uses,created) VALUES(?,?,?,?,?)',hash(token),str(b.label,'Nome do convite',100),expires,integer(b.maxUses??1,'Vagas',1,10),now());await audit(u,'invite.create',hash(token));json(res,{token,expires});return true;
   }
-  if(path==='/api/enrollment-invites/revoke'&&method==='POST'){need(isTeam(u));const b=await body(req);await run('UPDATE enrollment_invites SET expires=0 WHERE token=?',str(b.id,'Convite',100));await audit(u,'invite.revoke',b.id);json(res,{ok:true});return true;}
+  if(path==='/api/enrollment-invites/revoke'&&method==='POST'){need(canOperate(u));const b=await body(req);await run('UPDATE enrollment_invites SET expires=0 WHERE token=?',str(b.id,'Convite',100));await audit(u,'invite.revoke',b.id);json(res,{ok:true});return true;}
   if(path==='/api/posts'&&method==='GET'){
    const url=new URL(req.url,'http://localhost'),before=Number(url.searchParams.get('before')||2147483647);integer(before,'Página',1,2147483647);
    const where=isTeam(u)?'':u.role==='guardian'?' AND (p.family_id=? OR p.user_id=?)':' AND p.user_id=?';
@@ -148,8 +145,8 @@ export function createFeatures({db,storage,fail,str,integer,body,json,config,pas
     await run('UPDATE posts SET status=?,consent_by=?,updated=? WHERE id=?',learner?'guardian':'review',learner?null:u.id,now(),id);
    }
    else if(action==='authorize'){need(u.role==='guardian'&&u.family_id===p.family_id);if(p.status!=='guardian'||b.consent!==true)fail('Confira o conteúdo e autorize seu uso.');await run("UPDATE posts SET status='review',consent_by=?,updated=? WHERE id=?",u.id,now(),id);}
-   else if(action==='approve'){need(isTeam(u));if(p.status!=='review'||!p.consent_by)fail('A publicação precisa de autorização e revisão.');await run("UPDATE posts SET status='approved',review_note=?,updated=? WHERE id=?",optional(b.note,'Orientação',1000),now(),id);}
-   else if(action==='return'){need(isTeam(u)||editable(p,u));await run("UPDATE posts SET status='draft',consent_by=NULL,review_note=?,updated=? WHERE id=?",optional(b.note,'Orientação',1000),now(),id);}
+   else if(action==='approve'){need(canOperate(u));if(p.status!=='review'||!p.consent_by)fail('A publicação precisa de autorização e revisão.');await run("UPDATE posts SET status='approved',review_note=?,updated=? WHERE id=?",optional(b.note,'Orientação',1000),now(),id);}
+   else if(action==='return'){need(canOperate(u)||editable(p,u));await run("UPDATE posts SET status='draft',consent_by=NULL,review_note=?,updated=? WHERE id=?",optional(b.note,'Orientação',1000),now(),id);}
    else return false;
    await audit(u,'post.'+action,id);json(res,{ok:true});return true;
   }

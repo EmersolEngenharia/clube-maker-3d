@@ -33,6 +33,23 @@ test('perfis, famílias, equipe, convites e publicações com autorização',asy
  const f=await admin('/families',{name:'Família Um',plan:'monthly'}),f2=await admin('/families',{name:'Família Dois',plan:'annual'});
  async function register(c,role,email,family=f.id){const inv=await admin('/invites',{familyId:family,role});await c('/register',{token:inv.token,name:email,email,password:pass,avatar:'cat',theme:'ocean'});return (await c('/session')).user;}
  const g=await register(guardian,'guardian','guardian@test.example'),l=await register(learner,'learner','learner@test.example');await register(other,'guardian','other@test.example',f2.id);
+ await t.test('WhatsApp privado, horas concedidas e cupom de uso único',async()=>{
+  await guardian('/profile',{name:'Responsável',theme:'ocean',avatar:'cat',experience:'guided',whatsapp:'(64) 99999-1234'});
+  assert.equal((await guardian('/session')).user.whatsapp,'5564999991234');
+  await guardian('/profile',{name:'Responsável',whatsapp:'abc'},400);
+  const before=(await guardian('/dashboard')).balance.available;
+  await guardian('/benefits',{familyId:f.id,kind:'hours',value:60,reason:'Bônus'},403);
+  await admin('/benefits',{familyId:f.id,kind:'hours',value:60,reason:'Presente'});
+  assert.equal((await guardian('/dashboard')).balance.available,before+60);
+  assert.equal((await admin('/dashboard')).families.find(x=>x.id===f.id).balance.available,before+60);
+  await admin('/benefits',{familyId:f.id,kind:'discount',value:3000,reason:'Boas-vindas',code:'BEMVINDO'});
+  await admin('/benefits',{familyId:f.id,kind:'discount',value:3000,reason:'Duplicado',code:'BEMVINDO'},400);
+  await admin('/payments',{familyId:f2.id,description:'Mensalidade',cents:12000,gross:15000,coupon:'BEMVINDO'},400);
+  await admin('/payments',{familyId:f.id,description:'Mensalidade',cents:15000,gross:15000,coupon:'BEMVINDO'},400);
+  await admin('/payments',{familyId:f.id,description:'Mensalidade',cents:12000,gross:15000,coupon:'BEMVINDO'});
+  await admin('/payments',{familyId:f.id,description:'Mensalidade',cents:12000,gross:15000,coupon:'BEMVINDO'},400);
+  assert.equal((await guardian('/dashboard')).payments[0].cents,12000);
+ });
  const png={name:'foto.png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jm1sAAAAASUVORK5CYII='};
  await t.test('preferências persistem e fotos são privadas',async()=>{
   assert.equal((await guardian('/session')).user.theme,'ocean');
