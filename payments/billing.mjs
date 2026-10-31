@@ -42,7 +42,7 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
   });
   if(intent.existing)return safe(intent.existing);
   try{return await finalize(intent.id,await selected.createCharge(intent.input));}
-  catch(e){await db.transaction(async()=>{await db.run("UPDATE billing_contracts SET status=CASE WHEN status='creating' THEN 'needs_review' ELSE status END,error_note=?,updated=? WHERE id=?",e.uncertain?'Resposta não confirmada. Recupere a cobrança por referência; não repita a criação.':String(e.message).slice(0,600),now(),intent.id);});throw e;}
+  catch(e){await db.transaction(async()=>{await db.run("UPDATE billing_contracts SET status=CASE WHEN status='creating' THEN 'needs_review' ELSE status END,error_note=?,updated=? WHERE id=?",e.uncertain?'Resposta não confirmada. Recupere a cobrança por referência; não repita a criação.':'Emissão recusada. Confira os dados e a integração antes de tentar novamente.',now(),intent.id);});throw e;}
  }
  async function refresh(id,u){
   const c=await db.withRequest(()=>get(id,u));if(c.provider==='manual')return safe(c);if(!enabled)fail('Reconfigure o Asaas no mesmo ambiente para consultar a cobrança.',503);if(c.environment!==(env.ASAAS_ENV||'production'))fail('A cobrança pertence a outro ambiente do Asaas.',409);
