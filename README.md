@@ -1,8 +1,15 @@
 # Clube Maker 3D
 
-Portal do clube da Emersol, em Itumbiara–GO — versão 0.4.0.
+Portal do clube da Emersol, em Itumbiara–GO — versão 0.4.1.
 Interface em português, adaptada para computador e celular, com foco em crianças,
 famílias e adultos iniciantes.
+
+## Atualização 0.4.1 — desempenho
+
+Publicada em 31/10/2026. O dashboard agrupa leituras, reaproveita os dados de saldo
+por família e evita viagens repetidas ao PostgreSQL. Financeiro e estoque abrem
+sem recarregar o painel completo. Nas medições externas, o dashboard caiu de
+aproximadamente 8,2 s para 1,0 s. Veja [medições e publicação](docs/PUBLICACAO_0.4.1.md).
 
 ## Atualização 0.4.0 — financeiro, estoque e acessos
 
