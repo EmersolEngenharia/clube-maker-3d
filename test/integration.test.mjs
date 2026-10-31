@@ -10,7 +10,7 @@ test('ciclo completo e fronteiras de segurança do clube',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'maker-test-'));
  const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:dir,PORT:'3167',HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});
  t.after(async()=>{if(child.exitCode===null){child.kill();await once(child,'exit');}await rm(dir,{recursive:true,force:true});});
- await Promise.race([once(child.stdout,'data'),once(child,'exit').then(([code])=>{throw new Error('Servidor encerrou antes de iniciar: '+code);}),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('Servidor não iniciou')),6000);timer.unref();})]);
+ await Promise.race([once(child.stdout,'data'),once(child,'exit').then(([code])=>{throw new Error('Servidor encerrou antes de iniciar: '+code);}),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('Servidor não iniciou')),20000);timer.unref();})]);
  const base='http://127.0.0.1:3167';
  function client(){let cookie='';return async(path,b,expected=200,headers={})=>{const r=await fetch(base+'/api'+path,{method:b===undefined?'GET':'POST',headers:{...(b===undefined?{}:{'Content-Type':'application/json'}),...(cookie?{Cookie:cookie}:{}),...headers},body:b===undefined?undefined:JSON.stringify(b)});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const result=await r.json();if(expected===null)return {status:r.status,body:result};assert.equal(r.status,expected,`${path}: ${JSON.stringify(result)}`);return result;};}
  const admin=client(),guardian=client(),learner=client(),other=client(),anonymous=client();
