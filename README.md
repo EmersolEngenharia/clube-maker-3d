@@ -33,10 +33,18 @@ com Brotli/Gzip para a interface.
 - [Auditoria, resultados, limites e próximos recursos](docs/AUDITORIA_0.3.md)
 - [Guia de atualização e validação](docs/ATUALIZACAO_0.3.md)
 
-**Esta atualização foi validada localmente. A migração adicional e a versão 0.3.0
-não foram aplicadas/publicadas no ambiente de produção.** A publicação automática
+**Versão 0.3.0 publicada em https://maker3d.emersol.ai em 31/10/2026.**
+Migração adicional aplicada e funcionamento validado com PostgreSQL e Storage reais.
+Consulte [o registro da publicação](docs/PUBLICACAO_0.3.md). A publicação automática
 em redes sociais será uma integração futura; atualmente o portal organiza e revisa
 os conteúdos com acesso privado.
+
+## Publicar uma atualização
+
+Leia primeiro [o guia rápido de publicação](docs/DEPLOY_RAPIDO.md). Ele contém o acesso
+validado, scripts reutilizáveis, verificações e rollback. A identidade **Clube Maker 3D
+Emersol** já está online; veja [o registro da publicação](docs/PUBLICACAO_MARCA.md).
+`AGENTS.md` orienta as próximas sessões a começar pelo guia.
 
 ## Executar
 
