@@ -147,3 +147,10 @@ o ambiente gerenciado do Supabase.
 
 As sugestões acima são próximas etapas; não são funcionalidades implementadas
 nesta versão, exceto onde explicitamente descrito como entregue.
+
+
+## Publicação posterior à auditoria
+
+A versão 0.3.0 foi publicada em 31/10/2026, após autorização do usuário. A migração
+foi aplicada e os fluxos foram validados com PostgreSQL e Storage reais na versão
+candidata antes da ativação. Veja `PUBLICACAO_0.3.md` para SHA, verificações e rollback.

@@ -11,7 +11,7 @@
 ## PostgreSQL / Supabase / VPS
 
 A migração preparada é
-`supabase/migrations/20261031081259_maker3d_profiles_publications_and_invites.sql`.
+`supabase/migrations/20261031152441_maker3d_profiles_publications_and_invites.sql`.
 Ela cria sete tabelas privadas e índices, com RLS e grants para `maker3d_app`.
 Não reaplique a migração inicial que cria o schema.
 
@@ -28,7 +28,7 @@ de upload do adaptador. O backend valida o conteúdo e responde com o tipo corre
 somente após autorização. O limite de 10 MB por objeto continua compatível.
 
 A aplicação recusa iniciar em PostgreSQL quando detecta ausência das tabelas-base
-da atualização. Nenhuma migração remota ou implantação foi feita nesta entrega.
+da atualização. A migração foi aplicada e a versão foi publicada em 31/10/2026; veja `PUBLICACAO_0.3.md`.
 
 ## Fluxos novos para conferir
 
