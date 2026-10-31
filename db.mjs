@@ -49,15 +49,22 @@ export async function createDatabase({data}){
   });
   const client=await pool.connect();
   try{
-   await client.query('BEGIN');await client.query('SET LOCAL search_path = maker3d, pg_catalog');
-   await client.query("SET LOCAL statement_timeout = '15s'");await client.query("SET LOCAL lock_timeout = '10s'");
-   // The pilot has one printer and ten families. Serialize writes across app instances.
-   // All status transitions and balance allocations commit atomically, before HTTP success.
-   if(mutation)await client.query('SELECT pg_advisory_xact_lock(733031930)');
+   // One round trip sets request-local limits and the transaction. Mutations
+   // keep the same advisory lock and commit/rollback guarantees.
+   await client.query("BEGIN; SET LOCAL search_path = maker3d, pg_catalog; SET LOCAL statement_timeout = '15s'; SET LOCAL lock_timeout = '10s';"+(mutation?' SELECT pg_advisory_xact_lock(733031930);':''));
    const result=await context.run({client},fn);await client.query('COMMIT');return result;
   }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
  }
- const api={one,all,run,withRequest,transaction:fn=>withRequest(fn,true),close:async()=>{if(sqlite)sqlite.close();if(pool)await pool.end();if(pglite)await pglite.close();}};
+ async function snapshot(specs){
+  if(sqlite){const result={};for(const [key,spec]of Object.entries(specs))result[key]=await all(spec.sql,...(spec.params||[]));return result;}
+  const params=[],fields=[];
+  for(const [key,spec]of Object.entries(specs)){
+   if(!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key))throw new Error('Invalid snapshot key');
+   fields.push("'"+key+"', (SELECT COALESCE(jsonb_agg(to_jsonb(snapshot_row)), '[]'::jsonb) FROM ("+spec.sql+") snapshot_row)");params.push(...(spec.params||[]));
+  }
+  return (await one('SELECT jsonb_build_object('+fields.join(',')+') AS payload',...params)).payload;
+ }
+ const api={one,all,run,snapshot,withRequest,transaction:fn=>withRequest(fn,true),close:async()=>{if(sqlite)sqlite.close();if(pool)await pool.end();if(pglite)await pglite.close();}};
  if(mode==='postgres'){
   const schema=await api.one("SELECT to_regclass('maker3d.user_preferences') AS profiles,to_regclass('maker3d.posts') AS posts,to_regclass('maker3d.audit_log') AS audit,to_regclass('maker3d.benefits') AS benefits,to_regclass('maker3d.guardian_contacts') AS contacts,to_regclass('maker3d.cash_entries') AS finance,to_regclass('maker3d.benefit_allocations') AS allocations,to_regclass('maker3d.team_permissions') AS permissions");
   if(!schema.profiles||!schema.posts||!schema.audit||!schema.benefits||!schema.contacts||!schema.finance||!schema.allocations||!schema.permissions){await api.close();throw new Error('Atualize o banco com a migração de perfis e db/benefits-upgrade.sql e db/finance-postgres.sql antes de iniciar.');}

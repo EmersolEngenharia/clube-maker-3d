@@ -3,7 +3,7 @@ import {promisify} from 'node:util';
 import {gzipSync,brotliCompressSync,constants as zlibConstants} from 'node:zlib';
 import {createFeatures} from './features.mjs';
 import {isTeam,isAdmin,canFinance,canOperate} from './permissions.mjs';
-import {createQuota} from './quota.mjs';
+import {createQuota,computeQuota} from './quota.mjs';
 import {createOperations} from './operations.mjs';
 import { createDatabase } from './db.mjs';
 import { createFileStorage } from './storage.mjs';
@@ -96,20 +96,25 @@ async function handle(req,res){
     if(await features.route(req,res,path,method,u))return;
     if(path==='/api/logout'&&method==='POST'){(await run('DELETE FROM sessions WHERE user_id=?',u.id));res.setHeader('Set-Cookie','maker_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,{ok:true});}
     if(path==='/api/dashboard'&&method==='GET'){
-      const projects=isTeam(u)?(await all('SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,f.name family_name FROM projects p JOIN families f ON f.id=p.family_id ORDER BY p.created DESC')):(await all('SELECT id,family_id,name,participant,kind,status,created,updated,minutes,grams,material_rate,extra_rate,included,period,approved_at,actual_minutes,actual_grams,used,charge,paid FROM projects WHERE family_id=? ORDER BY created DESC',u.family_id));
-      const queue=(await all("SELECT id,name,family_id,status,minutes,approved_at FROM projects WHERE status IN ('queued','printing') ORDER BY CASE status WHEN 'printing' THEN 0 ELSE 1 END,approved_at")).map((p,i)=>({id:p.id,status:p.status,minutes:p.minutes,position:i+1,own:p.family_id===u.family_id,name:isTeam(u)||p.family_id===u.family_id?p.name:null}));
-      let families=[],participants=[],familyMembers=[];
-      if(isTeam(u)){
-        const fs=await all('SELECT * FROM families ORDER BY id');
-        const members=await all('SELECT u.id,u.name,u.email,u.role,u.family_id,t.user_id is_staff,(SELECT whatsapp FROM guardian_contacts WHERE user_id=u.id) whatsapp FROM users u LEFT JOIN team_members t ON t.user_id=u.id WHERE u.family_id IS NOT NULL');
-        const deps=await all("SELECT p.*,COALESCE(s.age_group,'unspecified') age_group,COALESCE(s.notes,'') notes,COALESCE(s.active,1) active FROM participants p LEFT JOIN participant_settings s ON s.participant_id=p.id");
-        const group=rows=>{const map=new Map();for(const row of rows){if(!map.has(row.family_id))map.set(row.family_id,[]);map.get(row.family_id).push(row);}return map;};
-        const byFamily=group(projects),byMember=group(members),byDependent=group(deps);
-        for(const f of fs)families.push({...f,balance:await familyBalance(f.id),members:byMember.get(f.id)||[],participants:byDependent.get(f.id)||[]});
-      }
-      if(u.role==='guardian'&&u.family_id)familyMembers=await all("SELECT u.id,u.name,u.email,u.role,(SELECT whatsapp FROM guardian_contacts WHERE user_id=u.id) whatsapp FROM users u WHERE u.family_id=?",u.family_id);
-      if(u.family_id)participants=await all("SELECT p.*,COALESCE(s.age_group,'unspecified') age_group,COALESCE(s.notes,'') notes,COALESCE(s.active,1) active FROM participants p LEFT JOIN participant_settings s ON s.participant_id=p.id WHERE p.family_id=?",u.family_id);
-      return json(res,{projects,queue,config:await config(),family:u.family_id?await one('SELECT * FROM families WHERE id=?',u.family_id):null,balance:u.family_id?await familyBalance(u.family_id):null,participants,families,familyMembers,payments:u.family_id?await all("SELECT p.* FROM payments p WHERE p.family_id=? AND NOT EXISTS(SELECT 1 FROM cash_entries c WHERE c.source_key='payment:' || p.id AND c.voided_at IS NOT NULL) ORDER BY p.id DESC",u.family_id):[]});
+      const team=isTeam(u),fid=u.family_id;
+      const scoped=(sql,clause='family_id')=>({sql:sql+(team?'':' WHERE '+clause+'=?'),params:team?[]:[fid]});
+      const data=await db.snapshot({
+        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,f.name family_name FROM projects p JOIN families f ON f.id=p.family_id ORDER BY p.created DESC':'SELECT id,family_id,name,participant,kind,status,created,updated,minutes,grams,material_rate,extra_rate,included,period,approved_at,actual_minutes,actual_grams,used,charge,paid FROM projects WHERE family_id=? ORDER BY created DESC',params:team?[]:[fid]},
+        queue:{sql:"SELECT id,name,family_id,status,minutes,approved_at FROM projects WHERE status IN ('queued','printing') ORDER BY CASE status WHEN 'printing' THEN 0 ELSE 1 END,approved_at"},
+        families:scoped('SELECT * FROM families','id'),
+        members:{sql:"SELECT u.id,u.name,u.email,u.role,u.family_id,t.user_id is_staff,c.whatsapp FROM users u LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE "+(team?'u.family_id IS NOT NULL':u.role==='guardian'?'u.family_id=?':'1=0'),params:!team&&u.role==='guardian'?[fid]:[]},
+        participants:scoped("SELECT p.*,COALESCE(s.age_group,'unspecified') age_group,COALESCE(s.notes,'') notes,COALESCE(s.active,1) active FROM participants p LEFT JOIN participant_settings s ON s.participant_id=p.id",'p.family_id'),
+        benefits:{sql:"SELECT b.*,t.expires_on FROM benefits b LEFT JOIN benefit_terms t ON t.code=b.code WHERE b.kind='hours'"+(team?'':' AND b.family_id=?'),params:team?[]:[fid]},
+        allocations:{...scoped('SELECT a.*,p.family_id FROM benefit_allocations a JOIN projects p ON p.id=a.project_id','p.family_id')},
+        payments:{sql:"SELECT p.* FROM payments p WHERE p.family_id=? AND NOT EXISTS(SELECT 1 FROM cash_entries c WHERE c.source_key='payment:' || p.id AND c.voided_at IS NOT NULL) ORDER BY p.id DESC",params:[fid]},
+        settings:{sql:'SELECT value FROM settings WHERE id=1'}
+      });
+      const group=rows=>{const map=new Map();for(const row of rows){if(!map.has(row.family_id))map.set(row.family_id,[]);map.get(row.family_id).push(row);}return map;};
+      const byProject=group(data.projects),byMember=group(data.members),byDependent=group(data.participants),byBenefit=group(data.benefits),byAllocation=group(data.allocations);
+      const balances=new Map(data.families.map(f=>[f.id,computeQuota(byProject.get(f.id)||[],f.allowance,byBenefit.get(f.id)||[],byAllocation.get(f.id)||[])]));
+      const families=team?data.families.map(f=>({...f,balance:balances.get(f.id),members:byMember.get(f.id)||[],participants:byDependent.get(f.id)||[]})):[];
+      const queue=data.queue.map((p,i)=>({id:p.id,status:p.status,minutes:p.minutes,position:i+1,own:p.family_id===fid,name:team||p.family_id===fid?p.name:null}));
+      return json(res,{projects:data.projects,queue,config:JSON.parse(data.settings[0].value),family:fid?data.families.find(f=>f.id===fid)||null:null,balance:fid?balances.get(fid)||null:null,participants:fid?byDependent.get(fid)||[]:[],families,familyMembers:u.role==='guardian'?byMember.get(fid)||[]:[],payments:data.payments});
     }
     if(path==='/api/participants'&&method==='POST'){authorized(u,['guardian']);const b=await body(req);if((await all('SELECT id FROM participants WHERE family_id=?',u.family_id)).length>=20)fail('Limite de 20 participantes por família.');(await run('INSERT INTO participants(family_id,name) VALUES(?,?)',u.family_id,str(b.name,'Nome',80)));return json(res,{ok:true});}
     if(path==='/api/projects'&&method==='POST'){
