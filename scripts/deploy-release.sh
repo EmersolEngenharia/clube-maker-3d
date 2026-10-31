@@ -49,7 +49,7 @@ for i in {1..20}; do
 done
 [[ "$healthy" == 1 ]]
 for asset in brand.css brand-icon.svg favicon.svg app.js features.js; do
-  curl -fsS "http://127.0.0.1:$port/$asset" | cmp - "public/$asset"
+  curl -fsS -H "Host: maker3d.emersol.ai" "http://127.0.0.1:$port/$asset" | cmp - "public/$asset"
 done
 docker rm -f "$candidate" >/dev/null
 printf 'MAKER3D_VERSION=%s\n' "$sha" > /etc/maker3d/version.env
