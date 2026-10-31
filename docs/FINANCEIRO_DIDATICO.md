@@ -37,7 +37,9 @@ ou perfil; não associa pessoas automaticamente apenas pela semelhança do nome.
 ## Matemática financeira
 
 A seção expansível **Aprender em família** explica receita, despesa, saldo e lucro.
-O saldo inclui dinheiro de vendas, mesada e presentes. Lucro de uma venda é venda
+O saldo inclui vendas e valores recebidos de fora da família. Repasses internos,
+como mesada de um membro para outro, não criam nova receita familiar e não devem
+ser contados novamente; esta versão não possui uma operação de transferência interna. Lucro de uma venda é venda
 menos custos; não deve ser confundido com mesada, aporte ou saldo do caixa.
 
 A calculadora usa quantidade, preço de venda por peça e custo por peça. Mostra o
