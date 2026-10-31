@@ -1,8 +1,15 @@
 # Clube Maker 3D
 
-Portal do clube da Emersol, em Itumbiara–GO — versão 0.5.0.
+Portal do clube da Emersol, em Itumbiara–GO — versão 0.6.0.
 Interface em português, adaptada para computador e celular, com foco em crianças,
 famílias e adultos iniciantes.
+
+## Atualização 0.6.0 — Asaas
+
+Tela Cobranças, adaptador PaymentProvider para PIX e cartão, webhook autenticado,
+conciliação idempotente, vigência, cancelamentos e diagnóstico administrativo.
+Na ausência dos segredos, mantém solicitação e recebimento manual. Não captura
+cartão no portal. [Configuração, decisões e homologação pendente](docs/ASAAS.md).
 
 ## Atualização 0.5.0 — dashboard financeiro e matemática em família
 

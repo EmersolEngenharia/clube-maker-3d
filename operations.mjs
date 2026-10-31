@@ -22,7 +22,7 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
   await run("INSERT INTO cash_entries(scope,family_id,kind,category,description,cents,entry_date,source_key,created) SELECT 'club',p.family_id,'income','printing',p.name,p.charge,SUBSTR(p.updated,1,10),'project:' || p.id,p.updated FROM projects p WHERE p.paid=1 AND NOT EXISTS(SELECT 1 FROM cash_entries c WHERE c.source_key='project:' || p.id)");
  }
  async function recordProject(p,u){
-  need(canFinance(u));if(p.paid)fail('O pagamento deste projeto já foi registrado.',409);
+  need(canFinance(u));if(await one("SELECT id FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id))fail('Este projeto tem cobrança em andamento. Use a tela Cobranças para confirmar ou cancelar.',409);if(p.paid)fail('O pagamento deste projeto já foi registrado.',409);
   await addEntry({familyId:p.family_id,kind:'income',category:'printing',description:'Impressão: '+p.name,cents:p.charge,sourceKey:'project:'+p.id,createdBy:u.id});
   await audit(u,'finance.project.received',p.id);
  }
@@ -108,12 +108,12 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const fid=scope==='family'?ownFamily(u):null;if(scope==='club')need(canFinance(u));
    const from=date(url.searchParams.get('from')||period()+'-01'),to=date(url.searchParams.get('to')||monthEnd());if(from>to)fail('A data inicial deve anteceder a final.');
    let rows;
-   if(scope==='club')rows=await all("SELECT c.*,f.name family_name,u.name author FROM cash_entries c LEFT JOIN families f ON f.id=c.family_id LEFT JOIN users u ON u.id=c.created_by WHERE c.scope='club' ORDER BY c.entry_date DESC,c.id DESC");
+   if(scope==='club')rows=await all("SELECT c.*,f.name family_name,u.name author,r.gateway payment_gateway FROM cash_entries c LEFT JOIN families f ON f.id=c.family_id LEFT JOIN users u ON u.id=c.created_by LEFT JOIN billing_receipts r ON r.entry_id=c.id WHERE c.scope='club' ORDER BY c.entry_date DESC,c.id DESC");
    else rows=await all("SELECT c.id,c.scope,c.family_id,c.created_by,CASE WHEN c.scope='club' THEN 'expense' ELSE c.kind END kind,c.category,c.description,c.cents,c.entry_date,c.source_key,c.created,c.voided_at,c.void_reason,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'family' ELSE COALESCE('p:' || a.participant_id,'u:' || a.user_id,'u:' || c.created_by,'family') END participant_key,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'Família' ELSE COALESCE(p.name,person.name,author.name,'Família') END participant_name FROM cash_entries c LEFT JOIN cash_attributions a ON a.entry_id=c.id LEFT JOIN participants p ON p.id=a.participant_id LEFT JOIN users person ON person.id=a.user_id LEFT JOIN users author ON author.id=c.created_by WHERE c.family_id=? AND (c.scope='family' OR (c.scope='club' AND c.kind='income')) ORDER BY c.entry_date DESC,c.id DESC",fid);
    const within=rows.filter(r=>r.entry_date>=from&&r.entry_date<=to),live=within.filter(r=>!r.voided_at),sum=kind=>live.filter(r=>r.kind===kind).reduce((n,r)=>n+r.cents,0);
    const income=sum('income'),expenses=sum('expense'),investments=sum('investment'),opening=rows.filter(r=>!r.voided_at&&r.entry_date<from).reduce((n,r)=>n+(r.kind==='expense'?-r.cents:r.cents),0);
    const people=scope==='family'?await all("SELECT 'u:' || id key,name,role FROM users WHERE family_id=? UNION ALL SELECT 'p:' || id key,name,'participant' role FROM participants WHERE family_id=?",fid,fid):[];
-   json(res,{scope,from,to,entries:within.map(e=>({...e,canVoid:!e.voided_at&&(scope==='club'||(e.scope==='family'&&(u.role==='guardian'||e.created_by===u.id)))})),people,actorKey:'u:'+u.id,guardian:u.role==='guardian',totals:{income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses},canEdit:true});return true;
+   json(res,{scope,from,to,entries:within.map(e=>({...e,canVoid:!e.voided_at&&e.payment_gateway!=='asaas'&&(scope==='club'||(e.scope==='family'&&(u.role==='guardian'||e.created_by===u.id)))})),people,actorKey:'u:'+u.id,guardian:u.role==='guardian',totals:{income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses},canEdit:true});return true;
   }
   if(path==='/api/finance/entries'&&method==='POST'){
    const b=await body(req),scope=b.scope;if(!['club','family'].includes(scope))fail('Área financeira inválida.');
@@ -138,9 +138,11 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const e=await one('SELECT * FROM cash_entries WHERE id=?',Number(voidEntry[1]));if(!e)fail('Lançamento não encontrado.',404);
    if(e.scope==='club')need(canFinance(u));else need(u.family_id===e.family_id&&(u.role==='guardian'||(u.role==='learner'&&e.created_by===u.id)));
    if(e.voided_at)fail('Este lançamento já foi estornado.');
+   const receipt=await one('SELECT * FROM billing_receipts WHERE entry_id=?',e.id);if(receipt?.gateway==='asaas')fail('Estorne o pagamento no painel do Asaas. O webhook atualizará o financeiro e a vigência.',409);
    const stock=await one('SELECT s.id FROM stock_lots s WHERE s.entry_id=?',e.id);if(stock&&await one('SELECT id FROM stock_uses WHERE lot_id=?',stock.id))fail('Este filamento já teve baixa. Registre um ajuste financeiro separado para preservar o estoque.');
    const b=await body(req);await run('UPDATE cash_entries SET voided_at=?,void_reason=? WHERE id=?',now(),str(b.reason,'Motivo do estorno',200),e.id);
    if(e.source_key?.startsWith('project:')){await run('UPDATE projects SET paid=0 WHERE id=?',Number(e.source_key.slice(8)));await run('UPDATE cash_entries SET source_key=? WHERE id=?',e.source_key+':void:'+e.id,e.id);}
+   if(receipt){await run("UPDATE billing_receipts SET status='refunded',updated=? WHERE entry_id=?",now(),e.id);const paid=await one("SELECT MAX(entitlement_end) ending FROM billing_receipts WHERE contract_id=? AND status='paid'",receipt.contract_id);await run("UPDATE billing_contracts SET status=CASE WHEN status='cancelled' THEN status ELSE ? END,current_period_end=?,updated=? WHERE id=?",paid?.ending?'active':'refunded',paid?.ending||null,now(),receipt.contract_id);}
    await audit(u,'finance.entry.void',e.id);json(res,{ok:true});return true;
   }
   if(path==='/api/stock'&&method==='GET'){

@@ -4,6 +4,7 @@ import {gzipSync,brotliCompressSync,constants as zlibConstants} from 'node:zlib'
 import {createFeatures} from './features.mjs';
 import {isTeam,isAdmin,canFinance,canOperate} from './permissions.mjs';
 import {createQuota,computeQuota} from './quota.mjs';
+import {createBilling} from './payments/billing.mjs';
 import {createOperations} from './operations.mjs';
 import { createDatabase } from './db.mjs';
 import { createFileStorage } from './storage.mjs';
@@ -43,19 +44,36 @@ async function quote(p){const a=allocation(p.minutes,(await familyBalance(p.fami
 async function login(res,id,req){await run('DELETE FROM sessions WHERE expires<?',Date.now());const token=randomBytes(32).toString('hex');(await run('INSERT INTO sessions VALUES(?,?,?)',hash(token),id,Date.now()+7*86400000));res.setHeader('Set-Cookie',`maker_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${process.env.COOKIE_SECURE==='1'?'; Secure':''}`);}
 function json(res,obj,status=200){if(res.deferJson){res.pendingJson={obj,status};return;}res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(obj));}
 
-async function handle(req,res){
-  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('X-Frame-Options','DENY');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
-    const url=new URL(req.url,'http://localhost'), path=url.pathname, method=req.method;
+function validateRequest(req,webhook=false){
+ const method=req.method;
     const allowedHost=process.env.PUBLIC_ORIGIN?new URL(process.env.PUBLIC_ORIGIN).host:null;
     const requestHost=req.headers.host||'';
     if(allowedHost?requestHost!==allowedHost:!/^((localhost|127\.0\.0\.1)(:\d+)?|\[::1\](:\d+)?)$/.test(requestHost))fail('Endereço não autorizado. Configure PUBLIC_ORIGIN para disponibilizar em outro endereço.',403);
-    if(!['GET','HEAD'].includes(method)){
+    if(!webhook&&!['GET','HEAD'].includes(method)){
       const expected=process.env.PUBLIC_ORIGIN||`http://${req.headers.host}`;
       if(req.headers.origin&&req.headers.origin!==expected)fail('Origem da solicitação não autorizada.',403);
       if(req.headers['sec-fetch-site']==='cross-site')fail('Solicitação não autorizada.',403);
       if(!String(req.headers['content-type']).startsWith('application/json'))fail('Envie os dados como JSON.',415);
     }
+ }
+async function rawBody(req){const chunks=[];let length=0;for await(const chunk of req){length+=chunk.length;if(length>1024*1024)fail('Webhook muito grande.',413);chunks.push(chunk);}return Buffer.concat(chunks).toString('utf8');}
+async function billingRequest(req,res,path){
+ validateRequest(req);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
+ const u=await db.withRequest(()=>user(req));authorized(u);
+ const method=req.method,b=method==='POST'?await body(req):null;
+ if(path==='/api/billing'&&method==='GET')return json(res,await db.withRequest(()=>billing.list(u)));
+ if(path==='/api/billing/diagnostic'&&method==='GET')return json(res,await billing.diagnostic(u));
+ if(path==='/api/billing/diagnostic/test'&&method==='POST')return json(res,await billing.diagnostic(u,true));
+ if(path==='/api/billing/charges'&&method==='POST')return json(res,await billing.create(b,u));
+ const match=path.match(/^\/api\/billing\/charges\/([a-f0-9-]+)\/(refresh|cancel|manual|pix|resolve)$/);
+ if(match){const id=match[1],action=match[2];if(action==='pix'&&method==='GET')return json(res,await billing.pix(id,u));if(method==='POST'){if(action==='resolve')return json(res,await billing.resolve(id,u,b.confirmed));if(action==='refresh')return json(res,await billing.refresh(id,u));if(action==='cancel')return json(res,await billing.cancel(id,u));if(action==='manual')return json(res,await billing.manualPaid(id,u));}}
+ fail('Ação de cobrança não encontrada.',404);
+}
+async function handle(req,res){
+  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('X-Frame-Options','DENY');
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    const url=new URL(req.url,'http://localhost'), path=url.pathname, method=req.method;
+    validateRequest(req);
     if(!path.startsWith('/api/')){
       const file=staticFiles.get(path);if(!file||!['GET','HEAD'].includes(method))fail('Página não encontrada.',404);
       const encodings=String(req.headers['accept-encoding']||'').split(',').map(v=>v.trim().split(';'));const accepts=name=>encodings.some(([n,...params])=>n===name&&!params.some(p=>/^q=0(?:\.0*)?$/.test(p.trim())));
@@ -176,10 +194,17 @@ async function handle(req,res){
 const features=createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login});
 const operations=createOperations({db,quota,fail,str,integer,body,json,creds,password,login});
 await db.transaction(()=>operations.backfill());
-const staticFiles=new Map(Object.entries({'/':'index.html','/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>{const bytes=readFileSync(join(root,'public',file));return [url,{bytes,gzip:gzipSync(bytes),br:brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:5}}),etag:'"'+hash(bytes)+'"',type:({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)]}];}));
+const billing=createBilling({db,fail,str,integer,config});
+const staticFiles=new Map(Object.entries({'/':'index.html','/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>{const bytes=readFileSync(join(root,'public',file));return [url,{bytes,gzip:gzipSync(bytes),br:brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:5}}),etag:'"'+hash(bytes)+'"',type:({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)]}];}));
 const cleanup=setInterval(()=>{for(const [k,v]of attempts)if(v.until<Date.now())attempts.delete(k);},60000);cleanup.unref();
 const server=http.createServer(async(req,res)=>{
   try {
+    const requestPath=new URL(req.url,'http://localhost').pathname;
+    if(requestPath==='/api/webhooks/asaas'&&req.method==='POST'){
+      validateRequest(req,true);res.setHeader('Cache-Control','no-store');
+      const event=await billing.parseWebhook(await rawBody(req),req.headers),result=await billing.handleEvent(event);json(res,{ok:true,...result});return;
+    }
+    if(requestPath==='/api/billing'||requestPath.startsWith('/api/billing/')){await billingRequest(req,res,requestPath);return;}
     if(req.url==='/healthz'&&req.method==='GET'){await db.one('SELECT 1 AS ok');json(res,{ok:true});return;}
     const mutation=!['GET','HEAD'].includes(req.method);
     if(mutation)await body(req);

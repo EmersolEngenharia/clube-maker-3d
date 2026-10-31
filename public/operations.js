@@ -40,7 +40,7 @@ async function paymentEditor(fid,initial={}){
 }
 function updatePaymentSummary(){const f=$('#payment-preview-form');if(!f)return;const gross=Math.round(Number(f.elements.gross.value)*100),discount=f.elements.waiver.checked?gross:Math.min(gross,Number(f.elements.coupon.selectedOptions[0]?.dataset.value||0));f.elements.coupon.disabled=f.elements.waiver.checked;f.elements.reason.required=f.elements.waiver.checked;$('#payment-live').innerHTML=`<div><span>Valor original</span><strong>${money(gross)}</strong></div><div><span>Desconto</span><strong>${money(discount)}</strong></div><div class="total"><span>Valor a receber</span><strong>${money(Math.max(0,gross-discount))}</strong></div>`;}
 function cashCategoryOptions(scope,kind){const choices=scope==='club'?{investment:['capital'],income:['other_income'],expense:['equipment','maintenance','rent','energy','services','other_expense']}:{income:['sales','allowance','gift','other_income'],expense:['supplies','shipping','purchase','other_expense']};return choices[kind].map(v=>`<option value="${v}">${financeCategories[v]}</option>`).join('');}
-async function operationAction(action,target){switch(action){
+async function operationAction(action,target){if(await billingAction(action,target))return true;switch(action){
  case'finance-clear':state.financeView[state.finance.scope]={search:'',kind:'all',category:'all',participant:'all',status:'active',sort:'date_desc',page:1};render();return true;
  case'finance-page':financeView().page=Number(target.dataset.page);updateFinanceList();return true;
  case'finance-category':Object.assign(financeView(),{kind:'expense',category:target.dataset.category,page:1});render();return true;
@@ -62,7 +62,7 @@ async function operationAction(action,target){switch(action){
  default:return false;
 }}
 function downloadCsv(filename,rows){const csv='\ufeff'+rows.map(row=>row.map(v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"').join(';')).join('\r\n'),url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-async function operationSubmit(form){const fd=new FormData(form),o=Object.fromEntries(fd);switch(form.id){
+async function operationSubmit(form){if(await billingSubmit(form))return true;const fd=new FormData(form),o=Object.fromEntries(fd);switch(form.id){
  case'finance-filter':{const scope=state.finance.scope;state.financeRange??={};state.financeRange[scope]={from:o.from,to:o.to};financeView().page=1;financeView().preset=o.preset;await loadOperationsPage();render();return true;}
  case'cash-form':await api('/finance/entries',{scope:form.dataset.scope,requestKey:form.dataset.key,kind:o.kind,category:o.category,description:o.description,participantKey:o.participantKey,cents:Math.round(Number(o.amount)*100),entryDate:o.entryDate});break;
  case'void-form':await api(`/finance/entries/${form.dataset.id}/void`,{reason:o.reason});break;
