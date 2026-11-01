@@ -1,0 +1,16 @@
+SET search_path = maker3d, pg_catalog;
+CREATE TABLE IF NOT EXISTS broadcasts(id TEXT PRIMARY KEY,author_id INTEGER NOT NULL REFERENCES users(id),body TEXT NOT NULL DEFAULT '',audience TEXT NOT NULL CHECK(audience IN ('primary','guardians','selected')),media_key TEXT,media_name TEXT,media_kind TEXT CHECK(media_kind IN ('image','video','document')),media_mime TEXT,media_size INTEGER,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS broadcast_deliveries(id TEXT PRIMARY KEY,broadcast_id TEXT NOT NULL REFERENCES broadcasts(id),user_id INTEGER NOT NULL REFERENCES users(id),family_id INTEGER REFERENCES families(id),whatsapp TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','sent','needs_review','failed','cancelled')),attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,provider_message_id TEXT,last_error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL,UNIQUE(broadcast_id,user_id));
+CREATE INDEX IF NOT EXISTS maker_broadcast_pending ON broadcast_deliveries(status,available_at);
+CREATE INDEX IF NOT EXISTS maker_broadcast_created ON broadcasts(created);
+ALTER TABLE broadcasts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maker3d_backend ON broadcasts;
+CREATE POLICY maker3d_backend ON broadcasts TO maker3d_app USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON broadcasts TO maker3d_app;
+REVOKE ALL ON broadcasts FROM PUBLIC, anon, authenticated;
+ALTER TABLE broadcast_deliveries ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maker3d_backend ON broadcast_deliveries;
+CREATE POLICY maker3d_backend ON broadcast_deliveries TO maker3d_app USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON broadcast_deliveries TO maker3d_app;
+REVOKE ALL ON broadcast_deliveries FROM PUBLIC, anon, authenticated;
+RESET search_path;

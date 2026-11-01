@@ -82,3 +82,17 @@ a primeira inscrição, o link real, o ciclo mensal, o lembrete e o relatório.
 Não criar cobrança ou mensagem artificial em nome de uma família para testar
 sem combinar o destinatário e o propósito. O trabalhador pode fazer envios
 operacionais previstos nesta funcionalidade quando estiver habilitado.
+
+## Comunicados
+
+Menu Comunicados, visível somente ao administrador do clube (a primeira conta
+administradora; administradores delegados da equipe não têm acesso). Envia texto,
+foto (JPG, PNG, WebP), vídeo (MP4, 3GP) ou PDF de até 10 MB para os responsáveis
+principais, todos os responsáveis ou responsáveis escolhidos com WhatsApp válido.
+`{nome}` vira o primeiro nome de cada destinatário; com anexo, o texto é a legenda.
+
+O anexo é conferido pelo conteúdo e guardado no bucket privado. Cada destinatário
+vira uma entrega em `broadcast_deliveries`, enviada pelo trabalhador a cada 20 s,
+com 3 s entre mensagens, somente com a automação habilitada e a instância conectada.
+Envio incerto vai para conferência e só volta à fila com confirmação; pendentes
+podem ser cancelados. Migração: `20261101120000_maker3d_whatsapp_broadcasts`.

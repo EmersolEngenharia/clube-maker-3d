@@ -5,6 +5,7 @@ import {createFeatures} from './features.mjs';
 import {isTeam,isAdmin,canFinance,canOperate} from './permissions.mjs';
 import {createQuota,computeQuota} from './quota.mjs';
 import {createAutomation} from './messaging/automation.mjs';
+import {createBroadcasts} from './messaging/broadcasts.mjs';
 import {AsaasProvider} from './payments/asaas.mjs';
 import {createBilling} from './payments/billing.mjs';
 import {createOperations} from './operations.mjs';
@@ -59,6 +60,16 @@ function validateRequest(req,webhook=false){
     }
  }
 async function rawBody(req){const chunks=[];let length=0;for await(const chunk of req){length+=chunk.length;if(length>1024*1024)fail('Webhook muito grande.',413);chunks.push(chunk);}return Buffer.concat(chunks).toString('utf8');}
+async function messagesRequest(req,res,path){
+ validateRequest(req);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
+ const u=await db.withRequest(()=>user(req));authorized(u);
+ const method=req.method,b=method==='POST'?await body(req):null;
+ if(path==='/api/messages'&&method==='GET')return json(res,await broadcasts.overview(u));
+ if(path==='/api/messages'&&method==='POST')return json(res,await broadcasts.create(u,b));
+ if(path==='/api/messages/retry'&&method==='POST')return json(res,await broadcasts.retry(u,b.id,b.confirmed));
+ if(path==='/api/messages/cancel'&&method==='POST')return json(res,await broadcasts.cancel(u,b.id));
+ fail('Rota não encontrada.',404);
+}
 async function billingRequest(req,res,path){
  validateRequest(req);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
  const u=await db.withRequest(()=>user(req));authorized(u);
@@ -95,7 +106,7 @@ async function handle(req,res){
     if(path==='/api/staff-register'&&method==='POST')rate(req);
     if(await operations.publicRoute(req,res,path,method))return;
     if(await features.publicRoute(req,res,path,method))return;
-    if(path==='/api/session'&&method==='GET'){return json(res,{user:u,setup:process.env.NODE_ENV!=='production'&&!(await one('SELECT id FROM users LIMIT 1')),config:(await config())});}
+    if(path==='/api/session'&&method==='GET'){return json(res,{user:u&&{...u,can_broadcast:await broadcasts.owner(u)},setup:process.env.NODE_ENV!=='production'&&!(await one('SELECT id FROM users LIMIT 1')),config:(await config())});}
     if(path==='/api/setup'&&method==='POST'){
       if(process.env.NODE_ENV==='production')fail('A conta inicial é criada pelo administrador do servidor.',403);
       rate(req);
@@ -206,11 +217,13 @@ const asaas=new AsaasProvider({key:process.env.ASAAS_API_KEY,webhookToken:proces
 const automation=createAutomation({db,billing,asaas,fail});
 const features=createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login,automation});
 const automationTimer=setInterval(()=>automation.tick().catch(()=>console.error('Falha no ciclo de automação WhatsApp.')),60000);automationTimer.unref();
+const broadcasts=createBroadcasts({db,storage,fail});
+const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.')),20000);broadcastTimer.unref();
 // Static assets are compressed once at startup. index.html points to /file?v=<hash>, so browsers
 // can keep CSS/JS for a year and skip revalidation; a new release changes the hash.
 const staticTypes={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
 function staticEntry(bytes,file){const gzip=gzipSync(bytes,{level:9}),br=brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:11}});return {bytes,gzip,br,version:hash(bytes).slice(0,16),etags:{identity:'"'+hash(bytes)+'"',gzip:'"'+hash(gzip)+'"',br:'"'+hash(br)+'"'},type:staticTypes[extname(file)]};}
-const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
+const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/messages.js':'messages.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
 staticFiles.set('/',staticEntry(Buffer.from(readFileSync(join(root,'public','index.html'),'utf8').replace(/(href|src)="(\/[\w.-]+\.(?:css|js|svg))"/g,(m,attr,url)=>staticFiles.has(url)?`${attr}="${url}?v=${staticFiles.get(url).version}"`:m)),'index.html'));
 const cleanup=setInterval(()=>{for(const [k,v]of attempts)if(v.until<Date.now())attempts.delete(k);},60000);cleanup.unref();
 const server=http.createServer(async(req,res)=>{
@@ -221,6 +234,7 @@ const server=http.createServer(async(req,res)=>{
       const event=await billing.parseWebhook(await rawBody(req),req.headers),result=await billing.handleEvent(event);json(res,{ok:true,...result});return;
     }
     if(requestPath==='/api/billing'||requestPath.startsWith('/api/billing/')){await billingRequest(req,res,requestPath);return;}
+    if(requestPath==='/api/messages'||requestPath.startsWith('/api/messages/')){await messagesRequest(req,res,requestPath);if(req.method==='POST')void broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.'));return;}
     if(req.url==='/healthz'&&req.method==='GET'){await db.one('SELECT 1 AS ok');json(res,{ok:true});return;}
     const mutation=!['GET','HEAD'].includes(req.method);
     if(mutation)await body(req);
@@ -236,4 +250,4 @@ const server=http.createServer(async(req,res)=>{
 });
 server.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>console.log(`Clube Maker 3D disponível em http://${process.env.HOST||'127.0.0.1'}:${process.env.PORT||3000}`));
 
-for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{clearInterval(automationTimer);server.close(async()=>{await db.close();process.exit(0);});});
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{clearInterval(automationTimer);clearInterval(broadcastTimer);server.close(async()=>{await db.close();process.exit(0);});});
