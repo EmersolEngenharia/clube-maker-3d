@@ -11,8 +11,10 @@ conciliação idempotente, vigência, cancelamentos e diagnóstico administrativ
 Na ausência dos segredos, mantém solicitação e recebimento manual. Não captura
 cartão no portal. [Configuração, decisões e homologação pendente](docs/ASAAS.md).
 
-**Publicada em 01/11/2026**, em modo manual até configurar a chave de produção e
-homologar o webhook. [Registro da publicação](docs/PUBLICACAO_0.6.md).
+**Publicada em 01/11/2026**. Após a publicação, o usuário informou que a chave de
+produção foi instalada e o contêiner recriado; conexão e webhook seguem pendentes
+de validação. [Estado atualizado](docs/HANDOFF_ASAAS_2026-11-01.md) e
+[registro da publicação](docs/PUBLICACAO_0.6.md).
 
 ## Atualização 0.5.0 — dashboard financeiro e matemática em família
 

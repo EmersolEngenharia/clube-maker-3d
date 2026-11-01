@@ -160,10 +160,18 @@ O sistema impede usar outro ambiente para cancelar/consultar uma cobrança antig
 - Avisos adicionais por WhatsApp/e-mail do clube não estão configurados. O hook
   não bloqueante está disponível; lembretes padrão do Asaas ficam habilitados.
 
-## Homologação ainda necessária
+## Estado atualizado e homologação ainda necessária
+
+Após a publicação, o handoff do usuário informa chave de produção instalada,
+contêiner recriado e presença da variável conferida. A conexão e o webhook ainda
+não foram declarados validados. A conta é compartilhada com o Solzi: preservar
+seu webhook e ignorar eventos de cobranças alheias. Ver o
+[registro de atualização e pendências](HANDOFF_ASAAS_2026-11-01.md).
+
+### Histórico da conferência na publicação
 
 Na publicação de 01/11/2026, ASAAS_ENV=production e o token privado do webhook
-foram preparados na VPS; ASAAS_API_KEY continua ausente. As páginas
+foram preparados na VPS; ASAAS_API_KEY estava ausente naquela conferência. As páginas
 públicas de referência Asaas consultadas retornaram HTTP 403; o contrato fornecido
 foi a referência de implementação. Testes de rede externa com credenciais e de
 checkout real não foram executados ou declarados aprovados.

@@ -16,7 +16,8 @@ ajuste de privacidade; QA de interface em desktop/celular. Container saudável,
 healthcheck externo 200 e hashes de billing.js, operations.js, app.js e brand.css
 iguais aos locais. Tarefas temporárias Plesk removidas.
 
-ASAAS_ENV=production; token de webhook presente; chave da API ausente. A versão
+Estado conferido no momento da publicação: ASAAS_ENV=production; token de webhook
+presente; chave da API ausente. A versão
 está publicada com modo manual. O webhook não foi cadastrado no painel Asaas.
 Testes usam mocks: emissão, checkout, conta e entrega real do webhook ainda
 precisam de homologação com credenciais. Ver [configuração](ASAAS.md).
@@ -24,3 +25,7 @@ precisam de homologação com credenciais. Ver [configuração](ASAAS.md).
 Rollback: seguir docs/DEPLOY_RAPIDO.md, usando o backup acima. Preservar as
 novas tabelas, os dados e o runtime privado; não desfazer a migração nem apagar
 recibos. Este registro documental não altera o SHA da imagem publicada.
+
+Atualização posterior relatada pelo usuário: chave instalada e contêiner recriado.
+Ver [handoff registrado](HANDOFF_ASAAS_2026-11-01.md). O relato não substitui a
+homologação da conexão e do webhook.
