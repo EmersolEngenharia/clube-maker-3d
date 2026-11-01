@@ -70,7 +70,7 @@ export function createFeatures({db,quota,storage,fail,str,integer,body,json,conf
  async function route(req,res,path,method,u){
   if(path==='/api/profile'&&method==='POST'){
    const b=await body(req);
-   if(u.role==='guardian'&&b.whatsapp!==undefined){
+   if((u.role==='guardian'||(u.role==='admin'&&u.family_id))&&b.whatsapp!==undefined){
     if(typeof b.whatsapp!=='string'||b.whatsapp.length>30||!/^[+\d\s().-]*$/.test(b.whatsapp))fail('WhatsApp inválido.');
     let phone=b.whatsapp.replace(/\D/g,'');if(phone.length===10||phone.length===11)phone='55'+phone;
     if(phone&&!/^[1-9]\d{9,14}$/.test(phone))fail('Informe o WhatsApp com DDD e código do país.');
