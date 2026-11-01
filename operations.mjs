@@ -12,7 +12,7 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
  const requestKey=b=>str(b.requestKey,'Identificação do lançamento',100);
  const accessRole=value=>{if(!['admin','finance','operator'].includes(value))fail('Função inválida.');return value;};
  async function family(id){const f=await one('SELECT * FROM families WHERE id=?',integer(id,'Família',1,2147483647));if(!f)fail('Família não encontrada.',404);return f;}
- function ownFamily(u){need(['guardian','learner'].includes(u.role)&&Boolean(u.family_id));return u.family_id;}
+ function ownFamily(u){need(['guardian','learner','admin'].includes(u.role)&&Boolean(u.family_id));return u.family_id;}
  async function addEntry({scope='club',familyId=null,kind,category,description,cents,entryDate=localDate(),sourceKey=null,createdBy=null,key=null}){
   return Number((await run('INSERT INTO cash_entries(scope,family_id,kind,category,description,cents,entry_date,source_key,created_by,created,request_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)',scope,familyId,kind,category,description,cents,entryDate,sourceKey,createdBy,now(),key)).lastInsertRowid);
  }
@@ -113,7 +113,7 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const within=rows.filter(r=>r.entry_date>=from&&r.entry_date<=to),live=within.filter(r=>!r.voided_at),sum=kind=>live.filter(r=>r.kind===kind).reduce((n,r)=>n+r.cents,0);
    const income=sum('income'),expenses=sum('expense'),investments=sum('investment'),opening=rows.filter(r=>!r.voided_at&&r.entry_date<from).reduce((n,r)=>n+(r.kind==='expense'?-r.cents:r.cents),0);
    const people=scope==='family'?await all("SELECT 'u:' || id key,name,role FROM users WHERE family_id=? UNION ALL SELECT 'p:' || id key,name,'participant' role FROM participants WHERE family_id=?",fid,fid):[];
-   json(res,{scope,from,to,entries:within.map(e=>({...e,canVoid:!e.voided_at&&e.payment_gateway!=='asaas'&&(scope==='club'||(e.scope==='family'&&(u.role==='guardian'||e.created_by===u.id)))})),people,actorKey:'u:'+u.id,guardian:u.role==='guardian',totals:{income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses},canEdit:true});return true;
+   json(res,{scope,from,to,entries:within.map(e=>({...e,canVoid:!e.voided_at&&e.payment_gateway!=='asaas'&&(scope==='club'||(e.scope==='family'&&(u.role==='guardian'||e.created_by===u.id)))})),people,actorKey:'u:'+u.id,guardian:u.role==='guardian'||(u.role==='admin'&&Boolean(u.family_id)),totals:{income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses},canEdit:true});return true;
   }
   if(path==='/api/finance/entries'&&method==='POST'){
    const b=await body(req),scope=b.scope;if(!['club','family'].includes(scope))fail('Área financeira inválida.');
@@ -136,7 +136,7 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
   const voidEntry=path.match(/^\/api\/finance\/entries\/(\d+)\/void$/);
   if(voidEntry&&method==='POST'){
    const e=await one('SELECT * FROM cash_entries WHERE id=?',Number(voidEntry[1]));if(!e)fail('Lançamento não encontrado.',404);
-   if(e.scope==='club')need(canFinance(u));else need(u.family_id===e.family_id&&(u.role==='guardian'||(u.role==='learner'&&e.created_by===u.id)));
+   if(e.scope==='club')need(canFinance(u));else need(u.family_id===e.family_id&&(u.role==='guardian'||u.role==='admin'||(u.role==='learner'&&e.created_by===u.id)));
    if(e.voided_at)fail('Este lançamento já foi estornado.');
    const receipt=await one('SELECT * FROM billing_receipts WHERE entry_id=?',e.id);if(receipt?.gateway==='asaas')fail('Estorne o pagamento no painel do Asaas. O webhook atualizará o financeiro e a vigência.',409);
    const stock=await one('SELECT s.id FROM stock_lots s WHERE s.entry_id=?',e.id);if(stock&&await one('SELECT id FROM stock_uses WHERE lot_id=?',stock.id))fail('Este filamento já teve baixa. Registre um ajuste financeiro separado para preservar o estoque.');
