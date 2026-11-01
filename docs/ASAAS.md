@@ -162,7 +162,8 @@ O sistema impede usar outro ambiente para cancelar/consultar uma cobrança antig
 
 ## Homologação ainda necessária
 
-Nesta sessão não havia chave, token ou ambiente configurados na VPS. As páginas
+Na publicação de 01/11/2026, ASAAS_ENV=production e o token privado do webhook
+foram preparados na VPS; ASAAS_API_KEY continua ausente. As páginas
 públicas de referência Asaas consultadas retornaram HTTP 403; o contrato fornecido
 foi a referência de implementação. Testes de rede externa com credenciais e de
 checkout real não foram executados ou declarados aprovados.
