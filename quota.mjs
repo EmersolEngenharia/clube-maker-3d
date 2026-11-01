@@ -27,11 +27,14 @@ export function computeQuota(projects,base,benefits,allocations,month=period(),t
 }
 export function createQuota(db){
  async function balance(id){
-  const f=await db.one('SELECT * FROM families WHERE id=?',id);
-  const projects=await db.all('SELECT * FROM projects WHERE family_id=?',id);
-  const benefits=await db.all("SELECT b.*,t.expires_on FROM benefits b LEFT JOIN benefit_terms t ON t.code=b.code WHERE b.family_id=? AND b.kind='hours'",id);
-  const allocations=await db.all('SELECT a.* FROM benefit_allocations a JOIN projects p ON p.id=a.project_id WHERE p.family_id=? ORDER BY a.code',id);
-  return computeQuota(projects,f.allowance,benefits,allocations);
+  // One database round trip: the app and the database are far apart, so each query costs ~0.1-0.2 s.
+  const d=await db.snapshot({
+   family:{sql:'SELECT allowance FROM families WHERE id=?',params:[id]},
+   projects:{sql:'SELECT * FROM projects WHERE family_id=?',params:[id]},
+   benefits:{sql:"SELECT b.*,t.expires_on FROM benefits b LEFT JOIN benefit_terms t ON t.code=b.code WHERE b.family_id=? AND b.kind='hours'",params:[id]},
+   allocations:{sql:'SELECT a.* FROM benefit_allocations a JOIN projects p ON p.id=a.project_id WHERE p.family_id=? ORDER BY a.code',params:[id]}
+  });
+  return computeQuota(d.projects,d.family[0].allowance,d.benefits,d.allocations);
  }
  async function reserve(projectId,familyId,included){
   // Called before setting project.included, inside the approval transaction.

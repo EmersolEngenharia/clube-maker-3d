@@ -84,8 +84,8 @@ async function handle(req,res){
     if(!path.startsWith('/api/')){
       const file=staticFiles.get(path);if(!file||!['GET','HEAD'].includes(method))fail('Página não encontrada.',404);
       const encodings=String(req.headers['accept-encoding']||'').split(',').map(v=>v.trim().split(';'));const accepts=name=>encodings.some(([n,...params])=>n===name&&!params.some(p=>/^q=0(?:\.0*)?$/.test(p.trim())));
-      const encoding=accepts('br')?'br':accepts('gzip')?'gzip':null,bytes=encoding?file[encoding]:file.bytes,etag='\"'+hash(bytes)+'\"';
-      res.setHeader('Cache-Control','public, max-age=0, must-revalidate');res.setHeader('ETag',etag);res.setHeader('Vary','Accept-Encoding');if(encoding)res.setHeader('Content-Encoding',encoding);
+      const encoding=accepts('br')?'br':accepts('gzip')?'gzip':null,bytes=encoding?file[encoding]:file.bytes,etag=file.etags[encoding||'identity'];
+      res.setHeader('Cache-Control',url.searchParams.get('v')===file.version?'public, max-age=31536000, immutable':'public, max-age=0, must-revalidate');res.setHeader('ETag',etag);res.setHeader('Vary','Accept-Encoding');if(encoding)res.setHeader('Content-Encoding',encoding);
       if(req.headers['if-none-match']===etag){res.writeHead(304);res.end();return;}
       res.writeHead(200,{'Content-Type':file.type,'Content-Length':bytes.length});res.end(method==='HEAD'?undefined:bytes);return;
     }
@@ -151,7 +151,7 @@ async function handle(req,res){
     }
     const match=path.match(/^\/api\/projects\/(\d+)(?:\/(\w+))?$/);
     if(match){const id=Number(match[1]),action=match[2],p=(await project(id,u));
-      if(!action&&method==='GET')return json(res,{...p,quote:p.minutes?(await quote(p)):null,messages:(await all('SELECT m.*,u.name,u.role,t.user_id is_staff FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id WHERE project_id=? ORDER BY m.id',id)),events:(await all('SELECT * FROM events WHERE project_id=? ORDER BY id',id)),files:(await all('SELECT id,name,size FROM files WHERE project_id=?',id))});
+      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id WHERE project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]}});return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d});}
       if(method!=='POST')fail('Ação não encontrada.',404);
       const b=await body(req);
       if(!canOperate(u)&&!(u.family_id&&u.family_id===p.family_id)&&['edit','submit','file','message'].includes(action))fail('Acesso operacional necessário.',403);
@@ -206,7 +206,12 @@ const asaas=new AsaasProvider({key:process.env.ASAAS_API_KEY,webhookToken:proces
 const automation=createAutomation({db,billing,asaas,fail});
 const features=createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login,automation});
 const automationTimer=setInterval(()=>automation.tick().catch(()=>console.error('Falha no ciclo de automação WhatsApp.')),60000);automationTimer.unref();
-const staticFiles=new Map(Object.entries({'/':'index.html','/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>{const bytes=readFileSync(join(root,'public',file));return [url,{bytes,gzip:gzipSync(bytes),br:brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:5}}),etag:'"'+hash(bytes)+'"',type:({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)]}];}));
+// Static assets are compressed once at startup. index.html points to /file?v=<hash>, so browsers
+// can keep CSS/JS for a year and skip revalidation; a new release changes the hash.
+const staticTypes={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
+function staticEntry(bytes,file){const gzip=gzipSync(bytes,{level:9}),br=brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:11}});return {bytes,gzip,br,version:hash(bytes).slice(0,16),etags:{identity:'"'+hash(bytes)+'"',gzip:'"'+hash(gzip)+'"',br:'"'+hash(br)+'"'},type:staticTypes[extname(file)]};}
+const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
+staticFiles.set('/',staticEntry(Buffer.from(readFileSync(join(root,'public','index.html'),'utf8').replace(/(href|src)="(\/[\w.-]+\.(?:css|js|svg))"/g,(m,attr,url)=>staticFiles.has(url)?`${attr}="${url}?v=${staticFiles.get(url).version}"`:m)),'index.html'));
 const cleanup=setInterval(()=>{for(const [k,v]of attempts)if(v.until<Date.now())attempts.delete(k);},60000);cleanup.unref();
 const server=http.createServer(async(req,res)=>{
   try {
