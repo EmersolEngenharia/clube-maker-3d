@@ -93,7 +93,7 @@ test('perfis, famílias, equipe, convites e publicações com autorização',asy
  await t.test('convite de inscrição é limitado, pode ser encerrado e cria família',async()=>{
   const inv=await admin('/enrollment-invites',{label:'Oficina maker',maxUses:1,days:7});
   assert.equal((await anon('/enrollment?token='+inv.token)).hours,12);
-  const newcomer=client(),entry={token:inv.token,name:'Novo',familyName:'Família Nova',email:'novo@test.example',password:pass,plan:'monthly',responsible:true};
+  const newcomer=client(),entry={token:inv.token,name:'Novo',familyName:'Família Nova',email:'novo@test.example',password:pass,plan:'monthly',responsible:true,document:'52998224725',whatsapp:'64999991234'};
   await newcomer('/enroll',{...entry,responsible:false},400);
   await newcomer('/enroll',entry);assert.equal((await newcomer('/dashboard')).family.name,'Família Nova');
   await anon('/enroll',{...entry,email:'another@test.example'},410);

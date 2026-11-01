@@ -6,7 +6,7 @@ import {localDate} from '../quota.mjs';
 const now=()=>new Date().toISOString();
 export function nextPeriod(start,plan){const d=new Date(start+'T12:00:00Z'),day=d.getUTCDate();d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+(plan==='annual'?12:1));const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));return d.toISOString().slice(0,10);}
 const validDay=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v+'T12:00:00Z'))?v:null;
-export function createBilling({db,fail,str,integer,config,env=process.env,provider,notify=async()=>false}){
+export function createBilling({db,fail,str,integer,config,env=process.env,provider,notify=async()=>false,onCharge=async()=>{}}){
  const asaas=provider||new AsaasProvider({key:env.ASAAS_API_KEY,webhookToken:env.ASAAS_WEBHOOK_TOKEN,environment:env.ASAAS_ENV||'production'}),manual=new ManualProvider();
  const configured=Boolean(env.ASAAS_API_KEY)||Boolean(provider),enabled=configured&&Boolean(env.ASAAS_WEBHOOK_TOKEN||provider);
  const selected=enabled?asaas:manual;
@@ -41,7 +41,7 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
    await audit(u,'billing.create',id);return {id,input:{subscriptionId:id,method:b.method,amountCents:amount,installments:b.method==='card_installments'?installments:undefined,cycle:plan==='annual'?'YEARLY':'MONTHLY',customer:{name,email,document:document||undefined,phone},splitRules,description:projectId?'Impressão #'+projectId+' — Clube Maker 3D Emersol':(plan==='annual'?'Anuidade':'Mensalidade')+' — Clube Maker 3D Emersol'}};
   });
   if(intent.existing)return safe(intent.existing);
-  try{return await finalize(intent.id,await selected.createCharge(intent.input));}
+  try{const result=await selected.createCharge({...intent.input,dueDate:localDate()});const c=await finalize(intent.id,result);try{await onCharge({...c,...result,dueDate:localDate()});}catch{/* Scheduler recovers invoices by contract; issuing never repeats because notification failed. */}return c;}
   catch(e){await db.transaction(async()=>{await db.run("UPDATE billing_contracts SET status=CASE WHEN status='creating' THEN 'needs_review' ELSE status END,error_note=?,updated=? WHERE id=?",e.uncertain?'Resposta não confirmada. Recupere a cobrança por referência; não repita a criação.':'Emissão recusada. Confira os dados e a integração antes de tentar novamente.',now(),intent.id);});throw e;}
  }
  async function refresh(id,u){

@@ -1,0 +1,16 @@
+SET search_path = maker3d, pg_catalog;
+CREATE TABLE IF NOT EXISTS family_automation(family_id INTEGER PRIMARY KEY REFERENCES families(id),primary_guardian_id INTEGER REFERENCES users(id),document TEXT NOT NULL DEFAULT '',installments INTEGER NOT NULL DEFAULT 12 CHECK(installments BETWEEN 1 AND 12),billing_enabled INTEGER NOT NULL DEFAULT 1,reports_enabled INTEGER NOT NULL DEFAULT 1,special_condition INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'new' CHECK(state IN ('new','linked','blocked','renewal')),contract_id TEXT REFERENCES billing_contracts(id),start_date TEXT,created TEXT NOT NULL,updated TEXT NOT NULL,last_error TEXT);
+CREATE TABLE IF NOT EXISTS whatsapp_outbox(id TEXT PRIMARY KEY,dedupe_key TEXT NOT NULL UNIQUE,family_id INTEGER NOT NULL REFERENCES families(id),kind TEXT NOT NULL CHECK(kind IN ('invoice','overdue','report','renewal')),contract_id TEXT REFERENCES billing_contracts(id),charge_id TEXT,due_date TEXT,report_period TEXT,status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','sent','needs_review','failed','cancelled')),attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,provider_message_id TEXT,last_error TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS maker_whatsapp_pending ON whatsapp_outbox(status,available_at);
+CREATE INDEX IF NOT EXISTS maker_whatsapp_family ON whatsapp_outbox(family_id,created);
+ALTER TABLE family_automation ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maker3d_backend ON family_automation;
+CREATE POLICY maker3d_backend ON family_automation TO maker3d_app USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON family_automation TO maker3d_app;
+REVOKE ALL ON family_automation FROM PUBLIC, anon, authenticated;
+ALTER TABLE whatsapp_outbox ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maker3d_backend ON whatsapp_outbox;
+CREATE POLICY maker3d_backend ON whatsapp_outbox TO maker3d_app USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_outbox TO maker3d_app;
+REVOKE ALL ON whatsapp_outbox FROM PUBLIC, anon, authenticated;
+RESET search_path;

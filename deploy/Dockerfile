@@ -5,6 +5,7 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --chown=node:node server.mjs domain.mjs db.mjs storage.mjs features.mjs operations.mjs permissions.mjs quota.mjs ./
 COPY --chown=node:node db ./db
 COPY --chown=node:node payments ./payments
+COPY --chown=node:node messaging ./messaging
 COPY --chown=node:node public ./public
 COPY --chown=node:node scripts/bootstrap-admin.mjs scripts/provision-database.mjs scripts/check-asaas-env.mjs ./scripts/
 USER node

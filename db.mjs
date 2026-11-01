@@ -10,7 +10,7 @@ export async function createDatabase({data}){
  let queue=Promise.resolve();
  async function exclusive(fn){const prev=queue;let release;queue=new Promise(r=>release=r);await prev;try{return await fn();}finally{release();}}
  if(mode==='sqlite'){
-  const {DatabaseSync}=await import('node:sqlite');mkdirSync(data,{recursive:true});sqlite=new DatabaseSync(join(data,'maker.sqlite'));sqlite.exec(readFileSync(new URL('./db/sqlite.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/extensions.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/finance.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/attribution.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/billing.sql',import.meta.url),'utf8'));sqlite.prepare('INSERT OR IGNORE INTO settings VALUES(1,?)').run(JSON.stringify(initialSettings));
+  const {DatabaseSync}=await import('node:sqlite');mkdirSync(data,{recursive:true});sqlite=new DatabaseSync(join(data,'maker.sqlite'));sqlite.exec(readFileSync(new URL('./db/sqlite.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/extensions.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/finance.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/attribution.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/billing.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/messaging.sql',import.meta.url),'utf8'));sqlite.prepare('INSERT OR IGNORE INTO settings VALUES(1,?)').run(JSON.stringify(initialSettings));
  }else if(mode==='postgres'){
   if(!process.env.DATABASE_URL)throw new Error('Configure DATABASE_URL no ambiente privado do servidor.');
   const {Pool}=await import('pg');
@@ -28,6 +28,7 @@ export async function createDatabase({data}){
   await pglite.exec(readFileSync(new URL('./db/finance-postgres.sql',import.meta.url),'utf8'));
   await pglite.exec(readFileSync(new URL('./db/attribution-postgres.sql',import.meta.url),'utf8'));
   await pglite.exec(readFileSync(new URL('./db/billing-postgres.sql',import.meta.url),'utf8'));
+  await pglite.exec(readFileSync(new URL('./db/messaging-postgres.sql',import.meta.url),'utf8'));
  }else throw new Error('Modo de banco inválido.');
  async function query(q,params=[]){
   if(sqlite){let stmt=statements.get(q);if(!stmt){stmt=sqlite.prepare(q);if(statements.size>=100)statements.delete(statements.keys().next().value);statements.set(q,stmt);}return /^\s*(SELECT|WITH)/i.test(q)?{rows:stmt.all(...params)}:{info:stmt.run(...params)};}
@@ -68,8 +69,8 @@ export async function createDatabase({data}){
  }
  const api={one,all,run,snapshot,withRequest,transaction:fn=>withRequest(fn,true),close:async()=>{if(sqlite)sqlite.close();if(pool)await pool.end();if(pglite)await pglite.close();}};
  if(mode==='postgres'){
-  const schema=await api.one("SELECT to_regclass('maker3d.user_preferences') AS profiles,to_regclass('maker3d.posts') AS posts,to_regclass('maker3d.audit_log') AS audit,to_regclass('maker3d.benefits') AS benefits,to_regclass('maker3d.guardian_contacts') AS contacts,to_regclass('maker3d.cash_entries') AS finance,to_regclass('maker3d.benefit_allocations') AS allocations,to_regclass('maker3d.team_permissions') AS permissions,to_regclass('maker3d.cash_attributions') AS attributions,to_regclass('maker3d.billing_contracts') AS billing");
-  if(!schema.profiles||!schema.posts||!schema.audit||!schema.benefits||!schema.contacts||!schema.finance||!schema.allocations||!schema.permissions||!schema.attributions||!schema.billing){await api.close();throw new Error('Atualize o banco com a migração de perfis e db/benefits-upgrade.sql e db/finance-postgres.sql e db/attribution-postgres.sql e db/billing-postgres.sql antes de iniciar.');}
+  const schema=await api.one("SELECT to_regclass('maker3d.user_preferences') AS profiles,to_regclass('maker3d.posts') AS posts,to_regclass('maker3d.audit_log') AS audit,to_regclass('maker3d.benefits') AS benefits,to_regclass('maker3d.guardian_contacts') AS contacts,to_regclass('maker3d.cash_entries') AS finance,to_regclass('maker3d.benefit_allocations') AS allocations,to_regclass('maker3d.team_permissions') AS permissions,to_regclass('maker3d.cash_attributions') AS attributions,to_regclass('maker3d.billing_contracts') AS billing,to_regclass('maker3d.family_automation') AS automation,to_regclass('maker3d.whatsapp_outbox') AS outbox");
+  if(!schema.profiles||!schema.posts||!schema.audit||!schema.benefits||!schema.contacts||!schema.finance||!schema.allocations||!schema.permissions||!schema.attributions||!schema.billing||!schema.automation||!schema.outbox){await api.close();throw new Error('Atualize o banco com a migração de perfis e db/benefits-upgrade.sql e db/finance-postgres.sql e db/attribution-postgres.sql e db/billing-postgres.sql e db/messaging-postgres.sql antes de iniciar.');}
  }
  if(mode==='postgres'&&process.env.NODE_ENV==='production'){const role=await api.one('SELECT current_user AS name');if(role.name!=='maker3d_app'){await api.close();throw new Error('Use o usuário dedicado maker3d_app na conexão de produção.');}}
  if(!sqlite)await api.withRequest(()=>run('INSERT INTO settings(id,value) VALUES(1,?) ON CONFLICT(id) DO NOTHING',JSON.stringify(initialSettings)),true);

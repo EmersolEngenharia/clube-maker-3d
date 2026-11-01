@@ -4,6 +4,8 @@ import {gzipSync,brotliCompressSync,constants as zlibConstants} from 'node:zlib'
 import {createFeatures} from './features.mjs';
 import {isTeam,isAdmin,canFinance,canOperate} from './permissions.mjs';
 import {createQuota,computeQuota} from './quota.mjs';
+import {createAutomation} from './messaging/automation.mjs';
+import {AsaasProvider} from './payments/asaas.mjs';
 import {createBilling} from './payments/billing.mjs';
 import {createOperations} from './operations.mjs';
 import { createDatabase } from './db.mjs';
@@ -61,6 +63,11 @@ async function billingRequest(req,res,path){
  validateRequest(req);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
  const u=await db.withRequest(()=>user(req));authorized(u);
  const method=req.method,b=method==='POST'?await body(req):null;
+ if(path==='/api/billing/automation'&&method==='GET')return json(res,await automation.overview(u));
+ if(path==='/api/billing/automation'&&method==='POST')return json(res,await automation.save(u,b));
+ if(path==='/api/billing/whatsapp/diagnostic'&&method==='GET')return json(res,await automation.diagnostic(u));
+ if(path==='/api/billing/whatsapp/test'&&method==='POST')return json(res,await automation.diagnostic(u,true));
+ if(path==='/api/billing/whatsapp/retry'&&method==='POST')return json(res,await automation.retry(u,b.id,b.confirmed));
  if(path==='/api/billing'&&method==='GET')return json(res,await db.withRequest(()=>billing.list(u)));
  if(path==='/api/billing/diagnostic'&&method==='GET')return json(res,await billing.diagnostic(u));
  if(path==='/api/billing/diagnostic/test'&&method==='POST')return json(res,await billing.diagnostic(u,true));
@@ -191,10 +198,14 @@ async function handle(req,res){
     if(path==='/api/settings'&&method==='POST'){authorized(u,['admin']);const b=await body(req);integer(b.monthly,'Mensalidade',0,1000000);integer(b.annual,'Anuidade',0,10000000);num(b.hours,'Horas',1,100);integer(b.extra,'Hora extra',0,100000);num(b.markup,'Acréscimo do material',0,200);if(!Array.isArray(b.materials)||!b.materials.length||b.materials.length>20)fail('Cadastre de 1 a 20 materiais.');const names=new Set();for(const m of b.materials){m.name=str(m.name,'Material',40);if(names.has(m.name))fail('Nomes de materiais devem ser únicos.');names.add(m.name);integer(m.cost,'Custo por kg',1,1000000);if(typeof m.active!=='boolean'||!Array.isArray(m.colors)||!m.colors.length||m.colors.length>20)fail('Informe as cores do material.');m.colors=m.colors.map(c=>str(c,'Cor',40));}(await run('UPDATE settings SET value=? WHERE id=1',JSON.stringify(b)));return json(res,{ok:true});}
     fail('Ação não encontrada.',404);
 }
-const features=createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login});
+
 const operations=createOperations({db,quota,fail,str,integer,body,json,creds,password,login});
 await db.transaction(()=>operations.backfill());
-const billing=createBilling({db,fail,str,integer,config});
+const billing=createBilling({db,fail,str,integer,config,onCharge:c=>automation.onCharge(c)});
+const asaas=new AsaasProvider({key:process.env.ASAAS_API_KEY,webhookToken:process.env.ASAAS_WEBHOOK_TOKEN,environment:process.env.ASAAS_ENV||'production'});
+const automation=createAutomation({db,billing,asaas,fail});
+const features=createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login,automation});
+const automationTimer=setInterval(()=>automation.tick().catch(()=>console.error('Falha no ciclo de automação WhatsApp.')),60000);automationTimer.unref();
 const staticFiles=new Map(Object.entries({'/':'index.html','/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>{const bytes=readFileSync(join(root,'public',file));return [url,{bytes,gzip:gzipSync(bytes),br:brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:5}}),etag:'"'+hash(bytes)+'"',type:({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)]}];}));
 const cleanup=setInterval(()=>{for(const [k,v]of attempts)if(v.until<Date.now())attempts.delete(k);},60000);cleanup.unref();
 const server=http.createServer(async(req,res)=>{
@@ -211,6 +222,7 @@ const server=http.createServer(async(req,res)=>{
     res.deferJson=mutation;
     if(new URL(req.url,'http://localhost').pathname.startsWith('/api/'))await db.withRequest(()=>handle(req,res),mutation);else await handle(req,res);
     if(res.pendingJson){res.deferJson=false;json(res,res.pendingJson.obj,res.pendingJson.status);}
+    if(requestPath==='/api/enroll'&&req.method==='POST')void automation.tick().catch(()=>console.error('Falha na automação após cadastro.'));
   }catch(e){
     res.deferJson=false;
     if(!e.status)console.error('Falha interna na solicitação:',e.code||'internal_error');
@@ -219,4 +231,4 @@ const server=http.createServer(async(req,res)=>{
 });
 server.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>console.log(`Clube Maker 3D disponível em http://${process.env.HOST||'127.0.0.1'}:${process.env.PORT||3000}`));
 
-for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>server.close(async()=>{await db.close();process.exit(0);}));
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{clearInterval(automationTimer);server.close(async()=>{await db.close();process.exit(0);});});

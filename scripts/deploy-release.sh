@@ -32,7 +32,7 @@ cleanup() {
   exit "$code"
 }
 trap cleanup EXIT
-docker run -d --name "$candidate" --env-file /etc/maker3d/runtime.env \
+docker run -d --name "$candidate" --env-file /etc/maker3d/runtime.env -e WHATSAPP_AUTOMATION_ENABLED=false \
   -e NODE_ENV=production -e HOST=0.0.0.0 -e PORT=3000 \
   -e DATABASE_MODE=postgres -e FILE_STORAGE=supabase \
   -e PUBLIC_ORIGIN=https://maker3d.emersol.ai -e COOKIE_SECURE=1 -e TRUST_PROXY=1 \

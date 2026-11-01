@@ -1,8 +1,15 @@
 # Clube Maker 3D
 
-Portal do clube da Emersol, em Itumbiara–GO — versão 0.6.0.
+Portal do clube da Emersol, em Itumbiara–GO — versão 0.7.0.
 Interface em português, adaptada para computador e celular, com foco em crianças,
 famílias e adultos iniciantes.
+
+## Atualização 0.7.0 — WhatsApp financeiro
+
+Evolution API: relatório mensal didático, link de pagamento no cadastro, PIX
+mensal, lembrete D+1 e renovação anual por escolha do responsável principal.
+Configuração e histórico em Cobranças; fila persistente e revisão de envio
+incerto. [Guia de configuração e operação](docs/WHATSAPP.md).
 
 ## Atualização 0.6.0 — Asaas
 

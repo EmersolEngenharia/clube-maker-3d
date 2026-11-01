@@ -1,3 +1,4 @@
+import {payerDocument,whatsappNumber} from './messaging/evolution.mjs';
 import {randomBytes,createHash} from 'node:crypto';
 import {extname} from 'node:path';
 
@@ -8,7 +9,7 @@ export const avatars=['robot','rocket','cat','dino','astronaut','flower','cube',
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const now=()=>new Date().toISOString();
 
-export function createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login}){
+export function createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login,automation}){
  const one=(q,...p)=>db.one(q,...p),all=(q,...p)=>db.all(q,...p),run=(q,...p)=>db.run(q,...p);
  const need=(condition,message='Você não tem permissão para esta ação.')=>{if(!condition)fail(message,403);};
  const audit=(u,action,target)=>run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,action,String(target),now());
@@ -53,6 +54,7 @@ export function createFeatures({db,quota,storage,fail,str,integer,body,json,conf
   }
   if(path==='/api/enroll'&&method==='POST'){
    const b=await body(req),email=creds(b),name=str(b.name,'Nome',80),familyName=str(b.familyName,'Família',80);preference(b);
+   if(!payerDocument(b.document)||!whatsappNumber(b.whatsapp))fail('Informe CPF/CNPJ válido e WhatsApp celular com DDD.');
    if(b.responsible!==true)fail('O cadastro da família deve ser feito pelo responsável adulto.');
    if(!['monthly','annual'].includes(b.plan))fail('Plano inválido.');
    const inv=await one('SELECT * FROM enrollment_invites WHERE token=? AND expires>?',hash(str(b.token,'Convite',150)),Date.now());
@@ -61,7 +63,7 @@ export function createFeatures({db,quota,storage,fail,str,integer,body,json,conf
    if(Number((await one('SELECT COUNT(*) n FROM families')).n)>=10)fail('Todas as 10 vagas do piloto estão ocupadas. Fale com a equipe.');
    const c=await config(),fid=Number((await run('INSERT INTO families(name,plan,allowance,created) VALUES(?,?,?,?)',familyName,b.plan,Math.round(c.hours*60),now())).lastInsertRowid);
    const id=Number((await run('INSERT INTO users(email,name,password,role,family_id) VALUES(?,?,?,?,?)',email,name,await password(b.password),'guardian',fid)).lastInsertRowid);
-   await savePreference(id,b);await run('UPDATE enrollment_invites SET uses=uses+1 WHERE token=?',inv.token);await login(res,id,req);json(res,{ok:true});return true;
+   await automation.enrolled(fid,id,b);await savePreference(id,b);await run('UPDATE enrollment_invites SET uses=uses+1 WHERE token=?',inv.token);await login(res,id,req);json(res,{ok:true});return true;
   }
   return false;
  }

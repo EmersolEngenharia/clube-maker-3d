@@ -42,8 +42,8 @@ export class AsaasProvider{
   const customer=await this.garantirCliente({externalReference:input.subscriptionId,name:input.customer.name,email:input.customer.email,cpfCnpj:input.customer.document,mobilePhone:input.customer.phone});
   const split=montarSplit((input.splitRules||[]).map(r=>({walletId:r.recipientId,amountCents:Math.round(input.amountCents*r.percentage/100)})));
   const common={customer,billingType:input.method.startsWith('pix_')?'PIX':'CREDIT_CARD',value:Math.round(input.amountCents)/100,description:input.description||'Participação no Clube Maker 3D Emersol',externalReference:input.subscriptionId,...(split.length?{split}:{})};
-  if(recurring(input.method)){const s=await this.call('/subscriptions',{method:'POST',body:{...common,cycle:input.cycle==='YEARLY'?'YEARLY':'MONTHLY',nextDueDate:tomorrow(this.clock())}});if(typeof s.id!=='string')throw new ProviderError('Resposta da assinatura incompleta. Confira pela referência.',502,{uncertain:true});const first=await this.firstInvoice(s.id);return {provider:this.id,gatewaySubscriptionId:s.id,gatewayChargeId:first?.id||s.id,checkoutUrl:first?.url,status:'pending'};}
-  const payment=await this.call('/payments',{method:'POST',body:{...common,dueDate:tomorrow(this.clock()),...(input.method==='card_installments'?corpoDeParcelamento(input.installments,input.amountCents):{})}});
+  if(recurring(input.method)){const s=await this.call('/subscriptions',{method:'POST',body:{...common,cycle:input.cycle==='YEARLY'?'YEARLY':'MONTHLY',nextDueDate:input.dueDate||tomorrow(this.clock())}});if(typeof s.id!=='string')throw new ProviderError('Resposta da assinatura incompleta. Confira pela referência.',502,{uncertain:true});const first=await this.firstInvoice(s.id);return {provider:this.id,gatewaySubscriptionId:s.id,gatewayChargeId:first?.id||s.id,checkoutUrl:first?.url,status:'pending'};}
+  const payment=await this.call('/payments',{method:'POST',body:{...common,dueDate:input.dueDate||tomorrow(this.clock()),...(input.method==='card_installments'?corpoDeParcelamento(input.installments,input.amountCents):{})}});
   if(typeof payment.id!=='string')throw new ProviderError('Resposta da cobrança incompleta. Confira pela referência.',502,{uncertain:true});
   return {provider:this.id,gatewayChargeId:payment.id,gatewayInstallmentId:payment.installment,checkoutUrl:checkoutURL(payment.invoiceUrl),status:['RECEIVED','CONFIRMED'].includes(payment.status)?'paid':'pending'};
  }
@@ -54,7 +54,7 @@ export class AsaasProvider{
  async parseWebhook(rawBody,headers){
   verifyToken(headers,this.token);let raw;try{raw=JSON.parse(rawBody);}catch{throw new ProviderError('JSON inválido.',400);}
   const p=raw?.payment||{},type=({PAYMENT_RECEIVED:'payment.paid',PAYMENT_CONFIRMED:'payment.paid',PAYMENT_OVERDUE:'payment.failed',PAYMENT_REFUNDED:'payment.refunded',PAYMENT_CHARGEBACK_REQUESTED:'payment.refunded'})[raw?.event]||'unknown';
-  return {type,gatewayChargeId:typeof p.id==='string'?p.id:'',amountCents:cents(p.value),externalReference:p.externalReference,gatewaySubscriptionId:p.subscription,gatewayInstallmentId:p.installment,dueDate:p.dueDate,paidDate:p.paymentDate||p.clientPaymentDate||p.confirmedDate,eventId:raw.id,raw};
+  return {type,gatewayChargeId:typeof p.id==='string'?p.id:'',amountCents:cents(p.value),externalReference:typeof p.externalReference==='string'?p.externalReference:null,gatewaySubscriptionId:p.subscription,gatewayInstallmentId:p.installment,dueDate:p.dueDate,paidDate:p.paymentDate||p.clientPaymentDate||p.confirmedDate,eventId:raw.id,raw};
  }
  async diagnostic(){let account;try{account=await this.call('/myAccount');}catch(e){if(e.status!==404)throw e;account=await this.call('/myAccount/commercialInfo');}
   if(!account.cpfCnpj){const commercial=await this.call('/myAccount/commercialInfo');account={...account,...commercial};}
