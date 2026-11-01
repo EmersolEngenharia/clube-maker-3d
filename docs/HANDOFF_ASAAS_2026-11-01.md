@@ -54,3 +54,23 @@ independentemente desse detalhe operacional.
 
 Este trabalho apenas atualiza documentação. Não altera código, infraestrutura,
 webhooks, cobranças, dados financeiros ou o SHA da versão publicada.
+
+## Conferência remota posterior — 01/11/2026
+
+Com autorização do usuário para testar, foram feitas consultas de leitura à API
+Asaas usando as credenciais já existentes no contêiner, sem exibir segredos:
+
+- Diagnóstico respondeu com nome EMERSOL SERVICOS e CNPJ correspondente à Emersol.
+- GET /webhooks confirmou Maker3D na URL esperada, enabled=true,
+  interrupted=false, API v3, SEQUENTIALLY e os cinco eventos especificados.
+- Webhook Solzi permanece cadastrado, ativo e sem interrupção.
+- A resposta não disponibilizou authToken; correspondência do token cadastrado
+  no painel com o runtime não foi confirmada pela consulta.
+- POSTs HTTPS sintéticos com o token do runtime retornaram HTTP 200 e descarte
+  esperado: evento desconhecido, recebimento sem referência e estorno com
+  referência externa não UUID. Não criaram cobranças ou lançamentos.
+
+Não foi provocada entrega pelo Asaas nem criada cobrança real. Entrega assinada
+pelo provedor e conciliação de uma cobrança emitida pelo Maker3D permanecem
+pendentes. O teste direto do endpoint confirma alcance e autenticação com o
+segredo do runtime, mas não comprova o token salvo no painel.
