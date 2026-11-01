@@ -9,6 +9,7 @@ const media=[
  {kind:'video',mime:'video/3gpp',test:b=>b.subarray(4,8).toString()==='ftyp'&&b.subarray(8,10).toString()==='3g'},
  {kind:'document',mime:'application/pdf',test:b=>b.subarray(0,5).toString()==='%PDF-'}
 ];
+export const mediaType=bytes=>media.find(t=>t.test(bytes));
 const statusOrder=['pending','sending','sent','needs_review','failed','cancelled'];
 const firstName=n=>String(n||'').trim().split(/\s+/)[0]||'responsável';
 export function createBroadcasts({db,storage,env=process.env,evolution,clock=()=>new Date(),pause=ms=>new Promise(r=>setTimeout(r,ms)),fail=(m,s=400)=>{throw Object.assign(new Error(m),{status:s});}}){
@@ -53,6 +54,17 @@ export function createBroadcasts({db,storage,env=process.env,evolution,clock=()=
   });}catch(e){if(key)await storage.remove(key).catch(()=>{});throw e;}
   return {id,queued:targets.length,skipped:b.audience==='selected'?chosen.length-targets.length:0};
  }
+ // Project conversation: tells the family's primary guardian that the team wrote, reusing this queue.
+ async function notifyFamily({authorId,familyId,text,media=null}){
+  const target=(await db.withRequest(()=>db.all(recipientsSQL))).find(p=>Number(p.family_id)===Number(familyId)&&Number(p.is_primary)&&whatsappNumber(p.whatsapp));
+  if(!target)return {queued:0};
+  const id=randomUUID();
+  await db.transaction(async()=>{
+   await db.run('INSERT INTO broadcasts(id,author_id,body,audience,media_key,media_name,media_kind,media_mime,media_size,created) VALUES(?,?,?,?,?,?,?,?,?,?)',id,authorId,text,'selected',media?.key??null,media?.name??null,media?'image':null,media?.mime??null,media?.size??null,stamp());
+   await db.run('INSERT INTO broadcast_deliveries(id,broadcast_id,user_id,family_id,whatsapp,available_at,created,updated) VALUES(?,?,?,?,?,?,?,?)',randomUUID(),id,target.id,target.family_id,whatsappNumber(target.whatsapp),stamp(),stamp(),stamp());
+  });
+  return {queued:1};
+ }
  async function retry(u,id,confirmed){await need(u);if(confirmed!==true)fail('Confirme que verificou o envio na Evolution.');
   await db.transaction(async()=>{const j=await db.one('SELECT status FROM broadcast_deliveries WHERE id=?',String(id));if(!j||!['failed','needs_review'].includes(j.status))fail('Mensagem indisponível para nova tentativa.');await db.run("UPDATE broadcast_deliveries SET status='pending',available_at=?,last_error=NULL,updated=? WHERE id=?",stamp(),stamp(),String(id));await db.run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'broadcast.retry',String(id),stamp());});return {ok:true};}
  async function cancel(u,id){await need(u);const r=await db.transaction(async()=>{const r=await db.run("UPDATE broadcast_deliveries SET status='cancelled',updated=? WHERE broadcast_id=? AND status='pending'",stamp(),String(id));await db.run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'broadcast.cancel',String(id),stamp());return r;});return {cancelled:Number(r.changes)||0};}
@@ -73,5 +85,5 @@ export function createBroadcasts({db,storage,env=process.env,evolution,clock=()=
    catch(e){await db.transaction(()=>db.run('UPDATE broadcast_deliveries SET status=?,last_error=?,updated=? WHERE id=?',e.uncertain?'needs_review':'failed',e.uncertain?'Envio não confirmado. Confira a Evolution antes de reenviar.':'Envio recusado. Confira o contato, o arquivo e a instância.',stamp(),job.id));}
   }
  }finally{running=false;}}
- return {owner,overview,create,retry,cancel,tick,enabled};
+ return {owner,overview,create,notifyFamily,retry,cancel,tick,enabled};
 }

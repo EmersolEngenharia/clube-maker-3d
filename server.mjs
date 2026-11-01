@@ -5,7 +5,7 @@ import {createFeatures} from './features.mjs';
 import {isTeam,isAdmin,canFinance,canOperate} from './permissions.mjs';
 import {createQuota,computeQuota} from './quota.mjs';
 import {createAutomation} from './messaging/automation.mjs';
-import {createBroadcasts} from './messaging/broadcasts.mjs';
+import {createBroadcasts,mediaType} from './messaging/broadcasts.mjs';
 import {AsaasProvider} from './payments/asaas.mjs';
 import {createBilling} from './payments/billing.mjs';
 import {createOperations} from './operations.mjs';
@@ -162,7 +162,7 @@ async function handle(req,res){
     }
     const match=path.match(/^\/api\/projects\/(\d+)(?:\/(\w+))?$/);
     if(match){const id=Number(match[1]),action=match[2],p=(await project(id,u));
-      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id WHERE project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]}});return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d});}
+      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]}});return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d});}
       if(method!=='POST')fail('Ação não encontrada.',404);
       const b=await body(req);
       if(!canOperate(u)&&!(u.family_id&&u.family_id===p.family_id)&&['edit','submit','file','message'].includes(action))fail('Acesso operacional necessário.',403);
@@ -172,7 +172,29 @@ async function handle(req,res){
         if(b.color!=='Quero ajuda'&&!colors.includes(b.color))fail('Escolha uma cor disponível.');
         (await run('UPDATE projects SET name=?,description=?,participant=?,size=?,color=?,quantity=?,updated=? WHERE id=?',str(b.name,'Nome',100),str(b.description,'Descrição',3000),str(b.participant,'Participante',80),str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),now(),id));(await event(id,'Detalhes da ideia atualizados.'));
       }
-      else if(action==='message'){(await run('INSERT INTO messages(project_id,user_id,body,created) VALUES(?,?,?,?)',id,u.id,str(b.body,'Mensagem',3000),now()));}
+      else if(action==='message'){
+        // Messages may carry one image; the team may also ask the guardian to accept a proposal (for example a suggested model).
+        const team=canOperate(u),text=typeof b.body==='string'?b.body.replace(/\r\n/g,'\n').trim():'',proposal=b.proposal===true;let file=null;
+        if(b.media!=null){if(typeof b.media!=='object'||typeof b.media.data!=='string'||!b.media.data||!/^[A-Za-z0-9+/]*={0,2}$/.test(b.media.data))fail('Imagem inválida.');const bytes=Buffer.from(b.media.data,'base64');if(!bytes.length||bytes.length>10*1024*1024)fail('A imagem deve ter até 10 MB.');const type=mediaType(bytes);if(type?.kind!=='image')fail('Envie uma imagem JPG, PNG ou WebP.');file={...type,bytes,name:String(b.media.name||'imagem').replace(/[\\/\0-\x1f]/g,'').trim().slice(0,120)||'imagem'};}
+        if(!text&&!file)fail('Escreva a mensagem ou anexe uma imagem.');if(text.length>3000)fail('A mensagem pode ter até 3.000 caracteres.');
+        if(proposal&&!team)fail('Somente a equipe envia propostas para aceite.',403);if(proposal&&!['review','question','approval'].includes(p.status))fail('Envie propostas antes de o projeto entrar na fila.');
+        const key=file?'message-'+randomBytes(24).toString('hex'):null;if(file)await storage.put(key,file.bytes);
+        try{await tx(async()=>{const mid=Number((await run('INSERT INTO messages(project_id,user_id,body,created) VALUES(?,?,?,?)',id,u.id,text,now())).lastInsertRowid);
+         if(file||proposal)await run('INSERT INTO message_extras(message_id,media_key,media_name,media_mime,media_size,proposal) VALUES(?,?,?,?,?,?)',mid,key,file?.name??null,file?.mime??null,file?.bytes.length??null,proposal?'pending':null);
+         if(proposal){await run("UPDATE projects SET status='question',updated=? WHERE id=?",now(),id);await event(id,'A equipe enviou uma proposta para o responsável aceitar.');}});}
+        catch(e){if(key)await storage.remove(key).catch(()=>{});throw e;}
+        if(team){const short=text.length>700?text.slice(0,700)+'…':text,msg=`Olá, {nome}! A equipe do Clube Maker 3D escreveu sobre o projeto "${p.name}":\n\n${short||'Veja a imagem enviada.'}\n\n${proposal?'Abra o portal para aceitar ou pedir ajustes nesta proposta':'Responda pelo portal'}: ${process.env.PUBLIC_ORIGIN||'https://maker3d.emersol.ai'}/`;
+         try{if((await broadcasts.notifyFamily({authorId:u.id,familyId:p.family_id,text:msg,media:file?{key,name:file.name,mime:file.mime,size:file.bytes.length}:null})).queued)void broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.'));}catch{console.error('Falha ao avisar a família pelo WhatsApp.');}}
+      }
+      else if(action==='answer'){
+        authorized(u,['guardian']);if(p.family_id!==u.family_id)fail('Somente o responsável desta família pode responder.',403);
+        const accept=b.accept===true,note=accept?(typeof b.note==='string'?b.note.trim().slice(0,1000):''):str(b.note,'O que ajustar',1000),mid=Number(b.messageId);
+        await tx(async()=>{const x=await one('SELECT x.proposal FROM message_extras x JOIN messages m ON m.id=x.message_id WHERE x.message_id=? AND m.project_id=?',mid,id);if(x?.proposal!=='pending')fail('Esta proposta não está aguardando resposta.',409);
+         await run('UPDATE message_extras SET proposal=?,answered_by=?,answered_at=?,answer_note=? WHERE message_id=?',accept?'accepted':'declined',u.id,now(),note||null,mid);
+         await run('INSERT INTO messages(project_id,user_id,body,created) VALUES(?,?,?,?)',id,u.id,(accept?'Proposta aceita.':'Pedi ajustes na proposta.')+(note?'\n'+note:''),now());
+         if(p.status==='question'&&!(await one("SELECT x.message_id FROM message_extras x JOIN messages m ON m.id=x.message_id WHERE m.project_id=? AND x.proposal='pending'",id)))await run("UPDATE projects SET status='review',updated=? WHERE id=?",now(),id);
+         await event(id,accept?'Responsável aceitou a proposta da equipe.':'Responsável pediu ajustes na proposta da equipe.');});
+      }
       else if(action==='submit'){if(!['draft','question'].includes(p.status))fail('Este projeto já foi enviado.');if(p.kind==='file'&&!(await one('SELECT id FROM files WHERE project_id=?',id)))fail('Adicione seu arquivo STL ou 3MF antes de enviar.');(await run("UPDATE projects SET status='review',updated=? WHERE id=?",now(),id));(await event(id,'Projeto enviado para avaliação.'));}
       else if(action==='file'){
         if(!['draft','question','review'].includes(p.status))fail('Arquivos só podem ser enviados antes do orçamento.');
@@ -201,6 +223,8 @@ async function handle(req,res){
       else fail('Ação não encontrada.',404);
       return json(res,{ok:true});
     }
+    const messageMedia=path.match(/^\/api\/message-media\/(\d+)$/);
+    if(messageMedia&&method==='GET'){const x=(await one('SELECT x.media_key,x.media_mime,m.project_id FROM message_extras x JOIN messages m ON m.id=x.message_id WHERE x.message_id=?',Number(messageMedia[1])));if(!x?.media_key)fail('Imagem não encontrada.',404);(await project(x.project_id,u));const bytes=await storage.get(x.media_key);res.writeHead(200,{'Content-Type':x.media_mime,'Cache-Control':'private, max-age=86400','Content-Disposition':'inline'});res.end(bytes);return;}
     const download=path.match(/^\/api\/files\/(\d+)$/);
     if(download&&method==='GET'){const f=(await one('SELECT * FROM files WHERE id=?',Number(download[1])));if(!f)fail('Arquivo não encontrado.',404);(await project(f.project_id,u));const bytes=await storage.get(f.path);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(f.name).replace(/'/g,'%27')}`});res.end(bytes);return;}
     authorized(u,canOperate(u)?null:['admin']);

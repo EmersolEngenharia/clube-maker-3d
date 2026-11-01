@@ -72,3 +72,9 @@ test('automação desativada mantém a fila sem enviar',async t=>{
  await b.create(owner,{text:'Oi',audience:'primary'});await b.tick();assert.equal(sent.length,0);
  assert.equal((await db.all("SELECT id FROM broadcast_deliveries WHERE status='pending'")).length,2);
 });
+test('conversa do projeto avisa só o responsável principal da família',async t=>{
+ const {b,sent,files}=await fixture(t);files.set('message-k',Buffer.from('img'));
+ assert.equal((await b.notifyFamily({authorId:1,familyId:2,text:'Olá, {nome}! Veja o modelo.',media:{key:'message-k',name:'m.png',mime:'image/png',size:3}})).queued,1);
+ assert.equal((await b.notifyFamily({authorId:1,familyId:99,text:'x'})).queued,0);
+ await b.tick();assert.equal(sent.length,1);assert.equal(sent[0].number,'5564999990003');assert.equal(sent[0].caption,'Olá, Bruno! Veja o modelo.');assert.equal(sent[0].kind,'image');
+});
