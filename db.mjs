@@ -18,7 +18,9 @@ export async function createDatabase({data}){
   if(url.searchParams.has('sslmode')&&url.searchParams.get('sslmode')!=='verify-full')throw new Error('Use TLS validado; remova sslmode ou use verify-full.');
   for(const k of ['sslmode','sslcert','sslkey','sslrootcert'])url.searchParams.delete(k);
   const ssl={rejectUnauthorized:true,...(process.env.DATABASE_CA_FILE?{ca:readFileSync(process.env.DATABASE_CA_FILE,'utf8')}:{})};
-  pool=new Pool({connectionString:url.toString(),ssl,max:5,connectionTimeoutMillis:10000,idleTimeoutMillis:30000,application_name:'maker3d'});
+  // The database is remote: opening a TLS connection costs several round trips, so keep a warm connection
+  // and recycle connections slowly instead of closing them after 30 s of idleness.
+  pool=new Pool({connectionString:url.toString(),ssl,max:5,min:1,connectionTimeoutMillis:10000,idleTimeoutMillis:Number(process.env.DATABASE_IDLE_MS||300000),maxLifetimeSeconds:1800,keepAlive:true,application_name:'maker3d'});
   pool.on('error',()=>console.error('Conexão de banco interrompida.'));
  }else if(mode==='pglite'&&process.env.NODE_ENV==='test'){
   const {PGlite}=await import('@electric-sql/pglite');pglite=new PGlite();

@@ -132,4 +132,9 @@ test('perfis, famílias, equipe, convites e publicações com autorização',asy
   assert.equal((await anon.raw('/themes.css',undefined,{'If-None-Match':etag})).status,304);
   assert.equal((await guardian.raw('/api/dashboard')).headers.get('cache-control'),'no-store');
  });
+ await t.test('página aponta para arquivos versionados com cache longo',async()=>{
+  const page=await (await anon.raw('/')).text(),url=page.match(/src="(\/app\.js\?v=[0-9a-f]{16})"/)?.[1];assert.ok(url);assert.match(page,/href="\/styles\.css\?v=[0-9a-f]{16}"/);
+  const versioned=await anon.raw(url);assert.equal(versioned.status,200);assert.match(versioned.headers.get('cache-control'),/immutable/);
+  assert.equal((await anon.raw('/app.js')).headers.get('cache-control'),'public, max-age=0, must-revalidate');assert.equal((await anon.raw('/app.js?v=antigo')).headers.get('cache-control'),'public, max-age=0, must-revalidate');
+ });
 });
