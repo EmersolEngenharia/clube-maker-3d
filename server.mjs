@@ -97,7 +97,7 @@ async function handle(req,res){
       const encodings=String(req.headers['accept-encoding']||'').split(',').map(v=>v.trim().split(';'));const accepts=name=>encodings.some(([n,...params])=>n===name&&!params.some(p=>/^q=0(?:\.0*)?$/.test(p.trim())));
       const encoding=accepts('br')?'br':accepts('gzip')?'gzip':null,bytes=encoding?file[encoding]:file.bytes,etag=file.etags[encoding||'identity'];
       res.setHeader('Cache-Control',url.searchParams.get('v')===file.version?'public, max-age=31536000, immutable':'public, max-age=0, must-revalidate');res.setHeader('ETag',etag);res.setHeader('Vary','Accept-Encoding');if(encoding)res.setHeader('Content-Encoding',encoding);
-      if(req.headers['if-none-match']===etag){res.writeHead(304);res.end();return;}
+      if(file.csp)res.setHeader('Content-Security-Policy',file.csp);if(req.headers['if-none-match']===etag){res.writeHead(304);res.end();return;}
       res.writeHead(200,{'Content-Type':file.type,'Content-Length':bytes.length});res.end(method==='HEAD'?undefined:bytes);return;
     }
     res.setHeader('Cache-Control','no-store');
@@ -223,7 +223,9 @@ const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('
 // can keep CSS/JS for a year and skip revalidation; a new release changes the hash.
 const staticTypes={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
 function staticEntry(bytes,file){const gzip=gzipSync(bytes,{level:9}),br=brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:11}});return {bytes,gzip,br,version:hash(bytes).slice(0,16),etags:{identity:'"'+hash(bytes)+'"',gzip:'"'+hash(gzip)+'"',br:'"'+hash(br)+'"'},type:staticTypes[extname(file)]};}
-const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/messages.js':'messages.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
+const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/messages.js':'messages.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg','/guia-impressao-3d.html':'guia-impressao-3d.html'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
+// The member guide is also offered as a standalone download, so its stylesheet stays inline and is allowed by hash.
+{const guide=staticFiles.get('/guia-impressao-3d.html'),style=guide.bytes.toString('utf8').match(/<style>([\s\S]*?)<\/style>/)[1];guide.csp=`default-src 'none'; style-src 'sha256-${createHash('sha256').update(style).digest('base64')}'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;}
 staticFiles.set('/',staticEntry(Buffer.from(readFileSync(join(root,'public','index.html'),'utf8').replace(/(href|src)="(\/[\w.-]+\.(?:css|js|svg))"/g,(m,attr,url)=>staticFiles.has(url)?`${attr}="${url}?v=${staticFiles.get(url).version}"`:m)),'index.html'));
 const cleanup=setInterval(()=>{for(const [k,v]of attempts)if(v.until<Date.now())attempts.delete(k);},60000);cleanup.unref();
 const server=http.createServer(async(req,res)=>{

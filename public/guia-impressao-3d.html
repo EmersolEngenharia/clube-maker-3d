@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#162846">
+<meta name="description" content="Arquivos aceitos, sites de modelos gratuitos e programas para criar e fatiar peças no Clube Maker 3D Emersol.">
+<title>Guia do Maker · Clube Maker 3D Emersol</title>
+<style>
+:root{--navy:#162846;--turquoise:#13c4d0;--sun:#ffcf54;--flame:#ff6328;--teal:#087982;--page:#f5f8fc;--paper:#fff;--ink:#162846;--muted:#5b6b82;--border:#e0e7ef;--soft:#e8f6f7;--notice:#fff7e3;--notice-ink:#79561a}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+a{color:var(--teal);font-weight:650;text-underline-offset:3px}
+a:focus-visible{outline:3px solid var(--turquoise);outline-offset:2px;border-radius:4px}
+.wrap{max-width:980px;margin:0 auto;padding:0 20px}
+header.hero{background:var(--navy);color:#fff;padding:40px 0 46px;position:relative;overflow:hidden}
+header.hero:after{content:"";position:absolute;right:-70px;top:-70px;width:230px;height:230px;border:28px solid var(--turquoise);border-radius:50%;opacity:.35}
+.brand{display:flex;align-items:center;gap:12px;font-weight:760;letter-spacing:-.4px}
+.brand svg{width:46px;height:46px;background:#fff;border-radius:14px;padding:3px;flex-shrink:0}
+.brand small{display:block;font-size:10px;letter-spacing:3px;color:#c9d8e9;font-weight:700}
+.eyebrow{font-size:11px;letter-spacing:2.5px;font-weight:760;text-transform:uppercase;color:var(--teal)}
+header .eyebrow{color:var(--sun);margin-top:34px}
+h1{font-size:clamp(30px,6vw,46px);line-height:1.08;letter-spacing:-1.2px;margin:10px 0 12px;max-width:640px}
+header p{color:#d6e2f0;max-width:620px;margin:0;font-size:17px}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+nav.toc a{color:var(--navy);background:var(--sun);text-decoration:none;padding:7px 14px;border-radius:999px;font-size:14px}
+main{padding:10px 0 50px}
+section{margin-top:42px}
+h2{font-size:clamp(23px,4vw,30px);letter-spacing:-.6px;line-height:1.2;margin:6px 0 8px}
+h3{font-size:18px;margin:0 0 4px;line-height:1.3}
+.lead{color:var(--muted);margin:0 0 18px;max-width:720px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
+.card{background:var(--paper);border:1px solid var(--border);border-radius:16px;padding:18px 20px;box-shadow:0 4px 24px #16284608}
+.card p{margin:6px 0 0;color:#33445c}
+.card .link{display:inline-block;margin-top:10px;font-size:15px;word-break:break-word}
+.tag{display:inline-block;font-size:11px;font-weight:760;letter-spacing:1px;text-transform:uppercase;border-radius:999px;padding:3px 10px;margin-bottom:8px;background:var(--soft);color:var(--teal)}
+.tag.sun{background:#fff1c7;color:#7a5600}
+.tag.flame{background:#ffe5da;color:#a63c18}
+.ext{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:700;background:var(--navy);color:#fff;border-radius:8px;padding:2px 9px;font-size:15px;white-space:nowrap}
+.ext-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.group-title{margin:26px 0 10px;font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted);font-weight:760}
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;counter-reset:step;margin:4px 0 18px}
+.flow div{background:var(--paper);border:1px solid var(--border);border-radius:14px;padding:14px 16px 14px 52px;position:relative;font-size:15px}
+.flow div:before{counter-increment:step;content:counter(step);position:absolute;left:14px;top:13px;width:27px;height:27px;border-radius:50%;background:var(--turquoise);color:var(--navy);font-weight:800;display:grid;place-items:center;font-size:14px}
+.flow b{display:block}
+.notice{background:var(--notice);color:var(--notice-ink);border-radius:14px;padding:14px 18px;margin-top:16px;border:1px solid #f4e2b5}
+.notice strong{color:#5e4210}
+.club{background:var(--soft);border:1px solid #bfe9ec;border-radius:16px;padding:18px 20px;margin-top:16px}
+.club h3{color:var(--teal)}
+.club ul{margin:8px 0 0;padding-left:20px}
+.star{color:var(--flame);font-weight:800}
+footer{border-top:1px solid var(--border);padding:22px 0 40px;color:var(--muted);font-size:14px}
+@media (max-width:520px){.wrap{padding:0 16px}header.hero{padding:28px 0 34px}.card{padding:16px}}
+@media print{
+  body{background:#fff;font-size:12.5px}
+  header.hero{background:#fff;color:var(--ink);padding:0 0 10px;border-bottom:3px solid var(--navy)}
+  header.hero:after,nav.toc{display:none}
+  header p{color:#33445c}header .eyebrow{color:var(--teal);margin-top:14px}
+  .brand small{color:var(--muted)}
+  .card,.flow div,.club,.notice{box-shadow:none;break-inside:avoid}
+  section{margin-top:22px}
+  a{color:var(--ink)}
+  a.link:after{content:" — " attr(href);font-weight:400;font-size:11px;color:var(--muted)}
+}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="brand">
+      <svg viewBox="0 0 256 256" role="img" aria-label="Foguete do Clube Maker 3D Emersol"><g transform="rotate(38 128 128)" stroke="#162846" stroke-width="7" stroke-linejoin="round"><path d="M102 171Q73 178 70 217L104 199M154 171Q183 178 186 217L152 199" fill="#13c4d0"/><path d="M109 215Q95 239 128 250Q160 235 147 215" fill="#ff6328"/><path d="M119 216Q111 231 128 239Q143 230 137 216" fill="#ffcf54" stroke="none"/><path d="M104 178H152V216H104Z" fill="#438fd0"/><path d="M128 14Q72 61 94 179H162Q184 61 128 14Z" fill="#ff6328"/><path d="M128 14Q101 37 94 68H162Q155 37 128 14Z" fill="#13c4d0"/><path d="M94 151H162V179H94Z" fill="#ffcf54"/><circle cx="128" cy="110" r="25" fill="#13c4d0"/><circle cx="128" cy="110" r="14" fill="#162846" stroke="none"/><path d="M128 170V216" stroke="#162846" stroke-width="12" stroke-linecap="round"/></g></svg>
+      <div>Clube Maker 3D Emersol<small>IMAGINE · CRIE · IMPRIMA</small></div>
+    </div>
+    <div class="eyebrow">Guia do maker</div>
+    <h1>Do arquivo certo à peça nas suas mãos.</h1>
+    <p>Quais arquivos usar, onde encontrar modelos gratuitos e quais programas ajudam a criar, editar e preparar suas peças para a impressora Bambu Lab do clube.</p>
+    <nav class="toc" aria-label="Seções do guia">
+      <a href="#arquivos">Arquivos aceitos</a>
+      <a href="#modelos">Modelos gratuitos</a>
+      <a href="#criar">Criar e editar</a>
+      <a href="#fatiar">Fatiar</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="arquivos" aria-labelledby="t-arquivos">
+  <div class="eyebrow">01 · Formatos</div>
+  <h2 id="t-arquivos">Extensões de arquivos aceitos</h2>
+  <p class="lead">No fluxo da impressão 3D existem dois tipos de arquivo: os de <b>geometria</b>, que você importa no fatiador, e os <b>processados</b>, que já vão prontos para a impressora.</p>
+
+  <div class="flow" aria-label="Caminho de um arquivo até a impressora">
+    <div><b>Modelo</b>Baixe ou desenhe a peça (.3mf, .step, .stl…)</div>
+    <div><b>Fatiador</b>Abra no Bambu Studio ou OrcaSlicer</div>
+    <div><b>Arquivo fatiado</b>Gere o .gcode.3mf com camadas e temperaturas</div>
+    <div><b>Impressora</b>Envie pela nuvem ou cartão micro SD</div>
+  </div>
+
+  <div class="group-title">Formatos de modelos — para importar no Bambu Studio / OrcaSlicer</div>
+  <div class="grid">
+    <article class="card">
+      <span class="tag">Mais recomendado</span>
+      <div class="ext-row"><span class="ext">.3mf</span></div>
+      <h3>3D Manufacturing Format</h3>
+      <p>Formato nativo. Guarda num único arquivo a geometria, a separação de cores do AMS, os suportes pintados e as configurações completas do fatiador.</p>
+    </article>
+    <article class="card">
+      <span class="tag sun">Peças técnicas</span>
+      <div class="ext-row"><span class="ext">.step</span><span class="ext">.stp</span></div>
+      <h3>Geometria exata de CAD</h3>
+      <p>Melhor formato para peças mecânicas. Traz a geometria matemática exata dos programas CAD, com curvas circulares perfeitas e sem o aspecto facetado do STL.</p>
+    </article>
+    <article class="card">
+      <span class="tag">Universal</span>
+      <div class="ext-row"><span class="ext">.stl</span></div>
+      <h3>Stereolithography</h3>
+      <p>O formato mais comum na internet, formado por uma malha de triângulos.</p>
+    </article>
+    <article class="card">
+      <span class="tag">Malha</span>
+      <div class="ext-row"><span class="ext">.obj</span></div>
+      <h3>Geometria e malha</h3>
+      <p>Suporta a geometria e informações básicas da malha.</p>
+    </article>
+    <article class="card">
+      <span class="tag flame">Logos e chaveiros</span>
+      <div class="ext-row"><span class="ext">.amf</span><span class="ext">.svg</span></div>
+      <h3>Aditivo e vetorial 2D</h3>
+      <p>Geometrias aditivas e importação de desenhos vetoriais 2D para extrusão rápida de logos e chaveiros.</p>
+    </article>
+  </div>
+
+  <div class="group-title">Formatos de execução — direto para a máquina</div>
+  <div class="grid">
+    <article class="card">
+      <span class="tag sun">Pronto para imprimir</span>
+      <div class="ext-row"><span class="ext">.gcode.3mf</span><span class="ext">.gcode</span></div>
+      <h3>Arquivos já fatiados</h3>
+      <p>Contêm as coordenadas de movimento e as temperaturas prontas para a impressora ler, enviados pela nuvem ou pelo cartão micro SD.</p>
+    </article>
+  </div>
+
+  <div class="club">
+    <h3>No portal do clube</h3>
+    <ul>
+      <li>Ao criar um projeto, envie o modelo em <b>.3mf</b> ou <b>.stl</b>. São os formatos que o portal recebe.</li>
+      <li>Tem um <b>.step</b>, <b>.obj</b> ou <b>.svg</b>? Importe no Bambu Studio e use <b>Arquivo › Salvar projeto como</b> para gerar um .3mf antes de enviar.</li>
+      <li>Fotos e desenhos de uma ideia podem ser enviados em PNG ou JPG. A equipe ajuda a transformar em modelo.</li>
+      <li>Quem fatia e envia para a impressora é a equipe do clube, então você não precisa mandar .gcode.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="modelos" aria-labelledby="t-modelos">
+  <div class="eyebrow">02 · Inspiração</div>
+  <h2 id="t-modelos">Sites gratuitos para baixar modelos 3D</h2>
+  <p class="lead">Antes de baixar, confira a licença do modelo e as fotos de quem já imprimiu. Crianças devem criar contas junto com o responsável.</p>
+  <div class="grid">
+    <article class="card">
+      <span class="tag">Recomendação principal</span>
+      <h3><span class="star" aria-hidden="true">★</span> MakerWorld</h3>
+      <p>Criado pela própria Bambu Lab. Permite imprimir com um clique pelo app Bambu Handy ou pelo Bambu Studio, com perfis de velocidade e cores já testados.</p>
+      <a class="link" href="https://makerworld.com" target="_blank" rel="noopener noreferrer">makerworld.com</a>
+    </article>
+    <article class="card">
+      <span class="tag">Curadoria</span>
+      <h3>Printables</h3>
+      <p>Mantido pela Prusa e pela comunidade maker. Reconhecido pela qualidade técnica dos modelos e pelas avaliações com fotos reais de impressões.</p>
+      <a class="link" href="https://www.printables.com" target="_blank" rel="noopener noreferrer">printables.com</a>
+    </article>
+    <article class="card">
+      <span class="tag">Maior acervo</span>
+      <h3>Thingiverse</h3>
+      <p>O maior e mais antigo acervo do mundo. Ótimo para peças de reposição, projetos clássicos e utilitários domésticos.</p>
+      <a class="link" href="https://www.thingiverse.com" target="_blank" rel="noopener noreferrer">thingiverse.com</a>
+    </article>
+    <article class="card">
+      <span class="tag">Busca inteligente</span>
+      <h3>Thangs</h3>
+      <p>Buscador com visualizador 3D integrado que pesquisa em vários repositórios da web ao mesmo tempo.</p>
+      <a class="link" href="https://thangs.com" target="_blank" rel="noopener noreferrer">thangs.com</a>
+    </article>
+    <article class="card">
+      <span class="tag flame">Grátis e pagos</span>
+      <h3>Cults3D</h3>
+      <p>Grande variedade de modelos decorativos, estátuas e miniaturas. Confira se o modelo é gratuito antes de baixar.</p>
+      <a class="link" href="https://cults3d.com" target="_blank" rel="noopener noreferrer">cults3d.com</a>
+    </article>
+  </div>
+</section>
+
+<section id="criar" aria-labelledby="t-criar">
+  <div class="eyebrow">03 · Criação</div>
+  <h2 id="t-criar">Sites e programas para criar e editar modelos 3D</h2>
+  <p class="lead">Comece pelo mais simples e avance conforme a curiosidade crescer.</p>
+
+  <div class="group-title">Para iniciantes e modelagem direta (fácil)</div>
+  <div class="grid">
+    <article class="card">
+      <span class="tag sun">Comece por aqui</span>
+      <h3>Tinkercad</h3>
+      <p>Gratuito e 100% no navegador, sem instalar nada. Você cria juntando e subtraindo blocos geométricos. O ponto de partida ideal para quem nunca desenhou em 3D.</p>
+      <a class="link" href="https://www.tinkercad.com" target="_blank" rel="noopener noreferrer">tinkercad.com</a>
+    </article>
+  </div>
+
+  <div class="group-title">Para modelagem paramétrica e peças técnicas (medidas e encaixes)</div>
+  <div class="grid">
+    <article class="card">
+      <span class="tag">CAD profissional</span>
+      <h3>Autodesk Fusion</h3>
+      <p>Antigo Fusion 360. Licença gratuita para uso pessoal e hobby. Cria peças mecânicas detalhadas com histórico de alterações e exporta direto em .step.</p>
+      <a class="link" href="https://www.autodesk.com/products/fusion-360/personal" target="_blank" rel="noopener noreferrer">autodesk.com/products/fusion-360/personal</a>
+    </article>
+    <article class="card">
+      <span class="tag">No navegador</span>
+      <h3>Onshape</h3>
+      <p>CAD paramétrico moderno que roda direto no navegador, em qualquer computador. Tem plano gratuito para projetos públicos.</p>
+      <a class="link" href="https://www.onshape.com" target="_blank" rel="noopener noreferrer">onshape.com</a>
+    </article>
+    <article class="card">
+      <span class="tag">Código aberto</span>
+      <h3>FreeCAD</h3>
+      <p>Software livre e de código aberto, ideal para modelagem de engenharia sem custo de assinatura.</p>
+      <a class="link" href="https://www.freecad.org" target="_blank" rel="noopener noreferrer">freecad.org</a>
+    </article>
+  </div>
+
+  <div class="group-title">Para modelagem orgânica, artística e escultura digital</div>
+  <div class="grid">
+    <article class="card">
+      <span class="tag flame">Arte e personagens</span>
+      <h3>Blender</h3>
+      <p>Gratuito e de código aberto, líder para esculpir miniaturas, personagens, máscaras e peças decorativas complexas.</p>
+      <a class="link" href="https://www.blender.org" target="_blank" rel="noopener noreferrer">blender.org</a>
+    </article>
+  </div>
+</section>
+
+<section id="fatiar" aria-labelledby="t-fatiar">
+  <div class="eyebrow">04 · Preparação</div>
+  <h2 id="t-fatiar">Fatiamento e preparação (slicers)</h2>
+  <p class="lead">O fatiador transforma o modelo em camadas e gera o arquivo que a impressora entende.</p>
+  <div class="grid">
+    <article class="card">
+      <span class="tag">Oficial da Bambu Lab</span>
+      <h3>Bambu Studio</h3>
+      <p>Fatiador oficial da máquina, para Windows e macOS. Suporte completo à gestão de carretéis do AMS 2, pintura de filamentos e acompanhamento pelas câmeras.</p>
+      <a class="link" href="https://bambulab.com/en/download/studio" target="_blank" rel="noopener noreferrer">bambulab.com/en/download/studio</a>
+    </article>
+    <article class="card">
+      <span class="tag sun">Para entusiastas</span>
+      <h3>OrcaSlicer</h3>
+      <p>Alternativa baseada no Bambu Studio, com testes automáticos de calibração fina de filamentos: temperatura, retração e pressão.</p>
+      <a class="link" href="https://github.com/SoftFever/OrcaSlicer/releases" target="_blank" rel="noopener noreferrer">github.com/SoftFever/OrcaSlicer</a>
+    </article>
+  </div>
+  <div class="notice"><strong>Baixe sempre do site oficial.</strong> Existem páginas falsas imitando o OrcaSlicer e outros programas. Use os endereços deste guia.</div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">Clube Maker 3D Emersol · Itumbiara, GO · <a href="https://maker3d.emersol.ai">maker3d.emersol.ai</a></div>
+</footer>
+</body>
+</html>
