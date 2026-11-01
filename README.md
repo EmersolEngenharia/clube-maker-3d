@@ -10,6 +10,9 @@ Evolution API: relatório mensal didático, link de pagamento no cadastro, PIX
 mensal, lembrete D+1 e renovação anual por escolha do responsável principal.
 Configuração e histórico em Cobranças; fila persistente e revisão de envio
 incerto. [Guia de configuração e operação](docs/WHATSAPP.md).
+**Publicada em 01/11/2026**, Evolution Emerson conectada e automação habilitada.
+Famílias antigas precisam completar os dados financeiros para emitir cobranças.
+[Registro da publicação](docs/PUBLICACAO_0.7.md).
 
 ## Atualização 0.6.0 — Asaas
 
