@@ -17,6 +17,7 @@ import { dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { period, allocation, settle } from './domain.mjs';
 import { parseModelLink, lookupModel, licenseLevel } from './models.mjs';
+import { createGallery } from './gallery.mjs';
 
 if(process.env.NODE_ENV==='production'&&(!process.env.PUBLIC_ORIGIN?.startsWith('https://')||process.env.COOKIE_SECURE!=='1'))throw new Error('Produção exige PUBLIC_ORIGIN HTTPS e COOKIE_SECURE=1.');
 const root=dirname(fileURLToPath(import.meta.url));
@@ -149,6 +150,7 @@ async function handle(req,res){
     authorized(u);
     if(await operations.route(req,res,path,method,u))return;
     if(await features.route(req,res,path,method,u))return;
+    if(await gallery.route(req,res,path,method,u))return;
     if(path==='/api/logout'&&method==='POST'){(await run('DELETE FROM sessions WHERE user_id=?',u.id));res.setHeader('Set-Cookie','maker_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,{ok:true});}
     if(path==='/api/dashboard'&&method==='GET'){
       const team=isTeam(u),fid=u.family_id;
@@ -178,16 +180,18 @@ async function handle(req,res){
       const cfg=(await config()),colors=cfg.materials.filter(m=>m.active).flatMap(m=>m.colors);
       if(b.color!=='Quero ajuda'&&!colors.includes(b.color))fail('Escolha uma cor disponível.');
       // A piece chosen on a model site keeps only its link and details; the file stays on the original site.
-      const link=kind==='link'?parseModelLink(b.link?.url):null,linkTitle=link?str(b.link?.title,'Nome da peça',200):null;
-      const description=link&&!(typeof b.description==='string'&&b.description.trim())?`Peça escolhida no ${link.siteName}.`:str(b.description,'Descrição',3000);
+      // "Quero um igual" from the club showcase reuses the piece's link, details and license check.
+      const copy=kind==='link'&&b.galleryItem!=null?await gallery.forOrder(b.galleryItem):null;
+      const link=copy?copy.link:kind==='link'?parseModelLink(b.link?.url):null,linkTitle=copy?copy.title:link?str(b.link?.title,'Nome da peça',200):null;
+      const description=link&&!(typeof b.description==='string'&&b.description.trim())?(copy?'Igual à peça da vitrine do clube.':`Peça escolhida no ${link.siteName}.`):str(b.description,'Descrição',3000);
       const id=Number((await run('INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',u.family_id,str(b.name,'Nome do projeto',100),description,str(b.participant,'Participante',80),kind,str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),now(),now())).lastInsertRowid);
-      if(link){const c=modelCache.get(link.url),info=c?.expires>Date.now()?c.info:null,key=info?.image?'model-'+randomBytes(24).toString('hex'):null;if(key)await storage.put(key,info.image.bytes);
-       try{await run('INSERT INTO model_links(project_id,site,url,model_id,profile_id,title,author,license,image_key,image_mime,created) VALUES(?,?,?,?,?,?,?,?,?,?,?)',id,link.site,link.url,link.modelId,link.profileId,linkTitle,info?.author??null,info?.license??null,key,key?info.image.mime:null,now());}catch(e){if(key)await storage.remove(key).catch(()=>{});throw e;}}
-      (await event(id,link?`Peça do ${link.siteName} salva como rascunho.`:'Ideia salva como rascunho.'));return json(res,{id});
+      if(link){const c=modelCache.get(link.url),info=copy||(c?.expires>Date.now()?c.info:null),key=info?.image?'model-'+randomBytes(24).toString('hex'):null;if(key)await storage.put(key,info.image.bytes);
+       try{await run('INSERT INTO model_links(project_id,site,url,model_id,profile_id,title,author,license,image_key,image_mime,license_checked_by,license_checked_at,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',id,link.site,link.url,link.modelId,link.profileId,linkTitle,info?.author??null,info?.license??null,key,key?info.image.mime:null,copy?.checkedBy??null,copy?.checkedAt??null,now());}catch(e){if(key)await storage.remove(key).catch(()=>{});throw e;}}
+      (await event(id,copy?'Pedido feito a partir da vitrine do clube, salvo como rascunho.':link?`Peça do ${link.siteName} salva como rascunho.`:'Ideia salva como rascunho.'));return json(res,{id});
     }
     const match=path.match(/^\/api\/projects\/(\d+)(?:\/(\w+))?$/);
     if(match){const id=Number(match[1]),action=match[2],p=(await project(id,u));
-      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]},model:{sql:'SELECT site,url,model_id,profile_id,title,author,license,license_checked_at,(SELECT name FROM users WHERE id=license_checked_by) license_checked_name,CASE WHEN image_key IS NULL THEN 0 ELSE 1 END has_image FROM model_links WHERE project_id=?',params:[id]}});const m=d.model[0];return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d,model:m?{...m,license_level:licenseLevel(m.license)}:null});}
+      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]},model:{sql:'SELECT site,url,model_id,profile_id,title,author,license,license_checked_at,(SELECT name FROM users WHERE id=license_checked_by) license_checked_name,CASE WHEN image_key IS NULL THEN 0 ELSE 1 END has_image FROM model_links WHERE project_id=?',params:[id]}});const m=d.model[0];return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d,model:m?{...m,license_level:licenseLevel(m.license)}:null,gallery:(await gallery.projectItem(id))||null});}
       if(method!=='POST')fail('Ação não encontrada.',404);
       const b=await body(req);
       if(!canOperate(u)&&!(u.family_id&&u.family_id===p.family_id)&&['edit','submit','file','message'].includes(action))fail('Acesso operacional necessário.',403);
@@ -269,6 +273,7 @@ const billing=createBilling({db,fail,str,integer,config,onCharge:c=>automation.o
 const asaas=new AsaasProvider({key:process.env.ASAAS_API_KEY,webhookToken:process.env.ASAAS_WEBHOOK_TOKEN,environment:process.env.ASAAS_ENV||'production'});
 const automation=createAutomation({db,billing,asaas,fail});
 const features=createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login,automation});
+const gallery=createGallery({db,storage,fail,str,integer,num,body,json,event,modelInfo:url=>{const c=modelCache.get(url);return c?.expires>Date.now()?c.info:null;}});
 const automationTimer=setInterval(()=>automation.tick().catch(()=>console.error('Falha no ciclo de automação WhatsApp.')),60000);automationTimer.unref();
 const broadcasts=createBroadcasts({db,storage,fail});
 const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.')),20000);broadcastTimer.unref();
@@ -276,7 +281,7 @@ const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('
 // can keep CSS/JS for a year and skip revalidation; a new release changes the hash.
 const staticTypes={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
 function staticEntry(bytes,file){const gzip=gzipSync(bytes,{level:9}),br=brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:11}});return {bytes,gzip,br,version:hash(bytes).slice(0,16),etags:{identity:'"'+hash(bytes)+'"',gzip:'"'+hash(gzip)+'"',br:'"'+hash(br)+'"'},type:staticTypes[extname(file)]};}
-const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/messages.js':'messages.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg','/guia-impressao-3d.html':'guia-impressao-3d.html'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
+const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/messages.js':'messages.js','/gallery.js':'gallery.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg','/guia-impressao-3d.html':'guia-impressao-3d.html'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
 // The member guide is also offered as a standalone download, so its stylesheet stays inline and is allowed by hash.
 {const guide=staticFiles.get('/guia-impressao-3d.html'),style=guide.bytes.toString('utf8').match(/<style>([\s\S]*?)<\/style>/)[1];guide.csp=`default-src 'none'; style-src 'sha256-${createHash('sha256').update(style).digest('base64')}'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;}
 staticFiles.set('/',staticEntry(Buffer.from(readFileSync(join(root,'public','index.html'),'utf8').replace(/(href|src)="(\/[\w.-]+\.(?:css|js|svg))"/g,(m,attr,url)=>staticFiles.has(url)?`${attr}="${url}?v=${staticFiles.get(url).version}"`:m)),'index.html'));
