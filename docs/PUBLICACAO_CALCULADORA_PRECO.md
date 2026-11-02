@@ -44,3 +44,15 @@ mv -Tf /opt/maker3d/current.rollback /opt/maker3d/current
   (R$ 37,90 como modelo pronto); `/healthz` 200; HTTP 301; SHA256 de pricing.js, app.js e styles.css
   igual ao commit. Rollback: procedimento acima, apontando para o release `92ae293…` e o backup
   `deploy-c391a5938c3f-*`.
+
+## Atualização — tela compacta e material puro separado (02/11/2026)
+
+- SHA implantado: `04fb7ce12d5f7a6ee62d900624594e0f22d1ec1c` (anterior `c391a59`). Sem migração.
+- 4 passos retráteis com subtotal no título (duas colunas a partir de 1200 px; fechados no celular,
+  com barra fixa de preço). Unidades dentro dos campos e dicas de MakerWorld/preço por kg.
+- Resultado em blocos Tempo / Material (material puro g × R$/kg, reserva de 20%) / totais; pedido com
+  várias peças mostra também o material puro total. Faixa da cota escondida nesta página.
+- Log: `/opt/maker3d/deploy-04fb7ce12d5f.log`. Verificado: 77 testes; QA local em 1586×860 (cabe sem
+  rolar) e 375×812, tema escuro; externo: um 502 isolado logo após a troca e depois `/healthz` 200
+  por 1 min seguido; SHA256 de pricing.js, app.js e styles.css igual ao commit. Rollback: procedimento
+  acima, apontando para o release `c391a59…` e o backup `deploy-04fb7ce12d5f-*`.
