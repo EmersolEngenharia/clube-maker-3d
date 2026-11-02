@@ -8,7 +8,7 @@ import {once} from 'node:events';
 
 test('ciclo completo e fronteiras de segurança do clube',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'maker-test-'));
- const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:dir,PORT:'3167',HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:dir,PORT:'3167',HOST:'127.0.0.1',MODEL_LOOKUP:'off'},stdio:['ignore','pipe','pipe']});
  t.after(async()=>{if(child.exitCode===null){child.kill();await once(child,'exit');}await rm(dir,{recursive:true,force:true});});
  await Promise.race([once(child.stdout,'data'),once(child,'exit').then(([code])=>{throw new Error('Servidor encerrou antes de iniciar: '+code);}),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('Servidor não iniciou')),20000);timer.unref();})]);
  const base='http://127.0.0.1:3167';
@@ -31,5 +31,23 @@ test('ciclo completo e fronteiras de segurança do clube',async t=>{
  await t.test('falha libera reserva sem cobrança e exige nova aprovação',async()=>{await admin(`/projects/${project2.id}/start`,{checked:true});await admin(`/projects/${project2.id}/fail`,{reason:'Falha de adesão na mesa.'});const p=await guardian(`/projects/${project2.id}`);assert.equal(p.charge,0);assert.equal(p.included,0);assert.equal(p.status,'failed');assert.equal((await guardian('/dashboard')).balance.available,220);await admin(`/projects/${project2.id}/start`,{checked:true},400);await admin(`/projects/${project2.id}/quote`,{minutes:100,grams:10,material:'PLA',note:'Reimpressão com ajuste da mesa.'});assert.equal((await guardian(`/projects/${project2.id}`)).status,'approval');});
  await t.test('pagamento da cota e configurações validadas',async()=>{await admin('/payments',{familyId:family.id,description:'Mensalidade outubro',cents:15000});assert.equal((await guardian('/dashboard')).payments.length,1);const config=(await admin('/dashboard')).config;await admin('/settings',{...config,hours:-1},400);await admin('/settings',{...config,extra:900});assert.equal((await guardian(`/projects/${project2.id}`)).extra_rate,600);await guardian('/participants',{name:'Ana'});assert.equal((await guardian('/dashboard')).participants.length,1);});
  await t.test('duas aprovações simultâneas não reservam a mesma franquia',async()=>{const a=await create(),b=await create();for(const p of[a,b])await admin(`/projects/${p.id}/quote`,{minutes:180,grams:10,material:'PLA',note:'Teste de aprovações simultâneas.'});const qa=(await guardian(`/projects/${a.id}`)).quote,qb=(await guardian(`/projects/${b.id}`)).quote;const results=await Promise.all([guardian(`/projects/${a.id}/approve`,{total:qa.total,included:qa.included},null),guardian(`/projects/${b.id}/approve`,{total:qb.total,included:qb.included},null)]);assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);assert.equal((await guardian('/dashboard')).balance.held,180);const approved=results[0].status===200?a:b;await guardian(`/projects/${approved.id}/cancel`,{});assert.equal((await guardian('/dashboard')).balance.held,0);});
+ await t.test('peça escolhida por link: dados manuais e licença conferida antes do orçamento',async()=>{
+  await guardian('/model-links/preview',{url:'https://makerworld.com/pt'},400);
+  const pv=await guardian('/model-links/preview',{url:'Veja: https://makerworld.com/pt/models/777-caixa?x=1#profileId-55'});
+  assert.deepEqual([pv.found,pv.profileId,pv.licenseLevel],[false,'55','unknown']);
+  const base={...idea,kind:'link',name:'Caixa organizadora',description:'',size:'Como no modelo original'};
+  await guardian('/projects',{...base,link:{url:'https://makerworld.com/pt',title:'Caixa'}},400);
+  await guardian('/projects',{...base,link:{url:pv.url,title:''}},400);
+  const p=await guardian('/projects',{...base,link:{url:pv.url,title:'Caixa organizadora'}});await guardian(`/projects/${p.id}/submit`,{});
+  const d=await guardian(`/projects/${p.id}`);assert.equal(d.kind,'link');assert.match(d.description,/MakerWorld/);
+  assert.deepEqual([d.model.site,d.model.url,d.model.profile_id,d.model.license_level,d.model.has_image],['makerworld','https://makerworld.com/pt/models/777-caixa#profileId-55','55','unknown',0]);
+  await other(`/projects/${p.id}`,undefined,404);
+  const listed=(await admin('/dashboard')).projects.find(x=>x.id===p.id);assert.deepEqual([listed.model_site,listed.license_level],['makerworld','unknown']);
+  const q={minutes:60,grams:20,material:'PLA',note:'Caixa no tamanho original.'};
+  await admin(`/projects/${p.id}/quote`,q,400);await guardian(`/projects/${p.id}/license`,{checked:true},403);await admin(`/projects/${p.id}/license`,{checked:false},400);
+  await admin(`/projects/${p.id}/license`,{checked:true});await admin(`/projects/${p.id}/license`,{checked:true},409);await admin(`/projects/${p.id}/quote`,q);
+  assert.ok((await guardian(`/projects/${p.id}`)).model.license_checked_name);await guardian(`/model-image/${p.id}`,undefined,404);
+  await guardian(`/projects/${p.id}/cancel`,{});
+ });
  await t.test('origem externa rejeitada e saída encerra sessão',async()=>{await guardian('/participants',{name:'Intruso'},403,{Origin:'https://untrusted.example'});await guardian('/logout',{});await guardian('/dashboard',undefined,401);});
 });

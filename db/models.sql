@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS model_links(project_id INTEGER PRIMARY KEY REFERENCES projects(id),site TEXT NOT NULL,url TEXT NOT NULL,model_id TEXT,profile_id TEXT,title TEXT NOT NULL,author TEXT,license TEXT,image_key TEXT,image_mime TEXT,license_checked_by INTEGER REFERENCES users(id),license_checked_at TEXT,created TEXT NOT NULL);

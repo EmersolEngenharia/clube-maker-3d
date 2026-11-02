@@ -16,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { period, allocation, settle } from './domain.mjs';
+import { parseModelLink, lookupModel, licenseLevel } from './models.mjs';
 
 if(process.env.NODE_ENV==='production'&&(!process.env.PUBLIC_ORIGIN?.startsWith('https://')||process.env.COOKIE_SECURE!=='1'))throw new Error('Produção exige PUBLIC_ORIGIN HTTPS e COOKIE_SECURE=1.');
 const root=dirname(fileURLToPath(import.meta.url));
@@ -87,6 +88,24 @@ async function billingRequest(req,res,path){
  if(match){const id=match[1],action=match[2];if(action==='pix'&&method==='GET')return json(res,await billing.pix(id,u));if(method==='POST'){if(action==='resolve')return json(res,await billing.resolve(id,u,b.confirmed));if(action==='refresh')return json(res,await billing.refresh(id,u));if(action==='cancel')return json(res,await billing.cancel(id,u));if(action==='manual')return json(res,await billing.manualPaid(id,u));}}
  fail('Ação de cobrança não encontrada.',404);
 }
+// Details of a chosen piece are looked up outside the database transaction. Creating the project reads them
+// from this cache, so the license and author stored with the order come from the site, not from the browser.
+const modelCache=new Map(),modelLookups=new Map();
+const modelColumns='CASE WHEN ml.image_key IS NULL THEN 0 ELSE 1 END model_image,ml.site model_site,ml.license model_license,ml.license_checked_at';
+async function modelPreview(req,res){
+ validateRequest(req);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
+ const u=await db.withRequest(()=>user(req));authorized(u);if(req.method!=='POST')fail('Rota não encontrada.',404);
+ const link=parseModelLink((await body(req)).url);let cached=modelCache.get(link.url);
+ if(!cached||cached.expires<Date.now()){
+  let v=modelLookups.get(u.id);if(!v||v.until<Date.now()){v={n:0,until:Date.now()+600000};modelLookups.set(u.id,v);}
+  if(++v.n>30)fail('Muitas buscas seguidas. Preencha o nome da peça ou aguarde alguns minutos.',429);
+  const info=process.env.MODEL_LOOKUP==='off'?null:await lookupModel(link);
+  modelCache.delete(link.url);if(modelCache.size>=200)modelCache.delete(modelCache.keys().next().value);
+  modelCache.set(link.url,cached={info,expires:Date.now()+(info?3600000:300000)});
+ }
+ const i=cached.info;
+ json(res,{...link,found:!!i,title:i?.title||null,author:i?.author||null,license:i?.license||null,licenseLevel:licenseLevel(i?.license),image:i?.image?`data:${i.image.mime};base64,${i.image.bytes.toString('base64')}`:null});
+}
 async function handle(req,res){
   res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('X-Frame-Options','DENY');
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
@@ -135,7 +154,7 @@ async function handle(req,res){
       const team=isTeam(u),fid=u.family_id;
       const scoped=(sql,clause='family_id')=>({sql:sql+(team?'':' WHERE '+clause+'=?'),params:team?[]:[fid]});
       const data=await db.snapshot({
-        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,f.name family_name FROM projects p JOIN families f ON f.id=p.family_id ORDER BY p.created DESC':'SELECT id,family_id,name,participant,kind,status,created,updated,minutes,grams,material_rate,extra_rate,included,period,approved_at,actual_minutes,actual_grams,used,charge,paid FROM projects WHERE family_id=? ORDER BY created DESC',params:team?[]:[fid]},
+        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,f.name family_name,'+modelColumns+' FROM projects p JOIN families f ON f.id=p.family_id LEFT JOIN model_links ml ON ml.project_id=p.id ORDER BY p.created DESC':'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,'+modelColumns+' FROM projects p LEFT JOIN model_links ml ON ml.project_id=p.id WHERE p.family_id=? ORDER BY p.created DESC',params:team?[]:[fid]},
         queue:{sql:"SELECT id,name,family_id,status,minutes,approved_at FROM projects WHERE status IN ('queued','printing') ORDER BY CASE status WHEN 'printing' THEN 0 ELSE 1 END,approved_at"},
         families:scoped('SELECT * FROM families','id'),
         members:{sql:"SELECT u.id,u.name,u.email,u.role,u.family_id,t.user_id is_staff,c.whatsapp FROM users u LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE "+(team?'u.family_id IS NOT NULL':u.role==='guardian'?'u.family_id=?':'1=0'),params:!team&&u.role==='guardian'?[fid]:[]},
@@ -145,6 +164,7 @@ async function handle(req,res){
         payments:{sql:"SELECT p.* FROM payments p WHERE p.family_id=? AND NOT EXISTS(SELECT 1 FROM cash_entries c WHERE c.source_key='payment:' || p.id AND c.voided_at IS NOT NULL) ORDER BY p.id DESC",params:[fid]},
         settings:{sql:'SELECT value FROM settings WHERE id=1'}
       });
+      for(const p of data.projects)if(p.model_site)p.license_level=licenseLevel(p.model_license);
       const group=rows=>{const map=new Map();for(const row of rows){if(!map.has(row.family_id))map.set(row.family_id,[]);map.get(row.family_id).push(row);}return map;};
       const byProject=group(data.projects),byMember=group(data.members),byDependent=group(data.participants),byBenefit=group(data.benefits),byAllocation=group(data.allocations);
       const balances=new Map(data.families.map(f=>[f.id,computeQuota(byProject.get(f.id)||[],f.allowance,byBenefit.get(f.id)||[],byAllocation.get(f.id)||[])]));
@@ -154,15 +174,20 @@ async function handle(req,res){
     }
     if(path==='/api/participants'&&method==='POST'){authorized(u,['guardian']);const b=await body(req);if((await all('SELECT id FROM participants WHERE family_id=?',u.family_id)).length>=20)fail('Limite de 20 participantes por família.');(await run('INSERT INTO participants(family_id,name) VALUES(?,?)',u.family_id,str(b.name,'Nome',80)));return json(res,{ok:true});}
     if(path==='/api/projects'&&method==='POST'){
-      authorized(u,['guardian','learner']);const b=await body(req);const kind=['idea','file'].includes(b.kind)?b.kind:'idea';
+      authorized(u,['guardian','learner']);const b=await body(req);const kind=['idea','file','link'].includes(b.kind)?b.kind:'idea';
       const cfg=(await config()),colors=cfg.materials.filter(m=>m.active).flatMap(m=>m.colors);
       if(b.color!=='Quero ajuda'&&!colors.includes(b.color))fail('Escolha uma cor disponível.');
-      const id=(await run('INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',u.family_id,str(b.name,'Nome do projeto',100),str(b.description,'Descrição',3000),str(b.participant,'Participante',80),kind,str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),now(),now())).lastInsertRowid;
-      (await event(Number(id),'Ideia salva como rascunho.'));return json(res,{id:Number(id)});
+      // A piece chosen on a model site keeps only its link and details; the file stays on the original site.
+      const link=kind==='link'?parseModelLink(b.link?.url):null,linkTitle=link?str(b.link?.title,'Nome da peça',200):null;
+      const description=link&&!(typeof b.description==='string'&&b.description.trim())?`Peça escolhida no ${link.siteName}.`:str(b.description,'Descrição',3000);
+      const id=Number((await run('INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',u.family_id,str(b.name,'Nome do projeto',100),description,str(b.participant,'Participante',80),kind,str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),now(),now())).lastInsertRowid);
+      if(link){const c=modelCache.get(link.url),info=c?.expires>Date.now()?c.info:null,key=info?.image?'model-'+randomBytes(24).toString('hex'):null;if(key)await storage.put(key,info.image.bytes);
+       try{await run('INSERT INTO model_links(project_id,site,url,model_id,profile_id,title,author,license,image_key,image_mime,created) VALUES(?,?,?,?,?,?,?,?,?,?,?)',id,link.site,link.url,link.modelId,link.profileId,linkTitle,info?.author??null,info?.license??null,key,key?info.image.mime:null,now());}catch(e){if(key)await storage.remove(key).catch(()=>{});throw e;}}
+      (await event(id,link?`Peça do ${link.siteName} salva como rascunho.`:'Ideia salva como rascunho.'));return json(res,{id});
     }
     const match=path.match(/^\/api\/projects\/(\d+)(?:\/(\w+))?$/);
     if(match){const id=Number(match[1]),action=match[2],p=(await project(id,u));
-      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]}});return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d});}
+      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]},model:{sql:'SELECT site,url,model_id,profile_id,title,author,license,license_checked_at,(SELECT name FROM users WHERE id=license_checked_by) license_checked_name,CASE WHEN image_key IS NULL THEN 0 ELSE 1 END has_image FROM model_links WHERE project_id=?',params:[id]}});const m=d.model[0];return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d,model:m?{...m,license_level:licenseLevel(m.license)}:null});}
       if(method!=='POST')fail('Ação não encontrada.',404);
       const b=await body(req);
       if(!canOperate(u)&&!(u.family_id&&u.family_id===p.family_id)&&['edit','submit','file','message'].includes(action))fail('Acesso operacional necessário.',403);
@@ -205,10 +230,12 @@ async function handle(req,res){
       }
       else if(action==='quote'){
         authorized(u,canOperate(u)?null:['admin']);if(!['review','question','approval','failed'].includes(p.status))fail('O projeto precisa estar em avaliação para receber um orçamento.');
+        const model=p.kind==='link'?(await one('SELECT license,license_checked_at FROM model_links WHERE project_id=?',id)):null;if(model&&licenseLevel(model.license)!=='open'&&!model.license_checked_at)fail('Confira a licença do modelo antes de preparar o orçamento.');
         const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
         const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),note=str(b.note,'Orientação',1000);
         (await run("UPDATE projects SET status='approval',minutes=?,grams=?,material=?,material_rate=?,extra_rate=?,quote_note=?,updated=? WHERE id=?",minutes,grams,m.name,Math.round(m.cost*(1+c.markup/100)),c.extra,note,now(),id));(await event(id,'Orçamento preparado. Aguardando aprovação do responsável.'));
       }
+      else if(action==='license'){authorized(u,canOperate(u)?null:['admin']);if(b.checked!==true)fail('Confirme que conferiu a licença do modelo.');if(!['draft','review','question','approval','failed'].includes(p.status))fail('A licença é conferida antes do orçamento.');if(!(await run('UPDATE model_links SET license_checked_by=?,license_checked_at=? WHERE project_id=? AND license_checked_at IS NULL',u.id,now(),id)).changes)fail('Este pedido não tem licença para conferir.',409);(await event(id,'A equipe conferiu a licença do modelo e liberou a impressão.'));}
       else if(action==='approve'){
         authorized(u,['guardian']);if(p.family_id!==u.family_id)fail('Somente o responsável desta família pode aprovar.',403);(await tx(async ()=>{const current=(await project(id,u));if(current.status!=='approval')fail('Este orçamento não está mais disponível.');const q=(await quote(current));if(b.total!==q.total||b.included!==q.included)fail('O saldo mudou. Reabra o orçamento para conferir o valor atualizado.',409);await quota.reserve(id,current.family_id,q.included);(await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),now(),q.total,now(),id));(await event(id,`Orçamento aprovado. ${q.included} minutos reservados; valor máximo adicional R$ ${(q.total/100).toFixed(2)}.`));}));
       }
@@ -225,6 +252,8 @@ async function handle(req,res){
     }
     const messageMedia=path.match(/^\/api\/message-media\/(\d+)$/);
     if(messageMedia&&method==='GET'){const x=(await one('SELECT x.media_key,x.media_mime,m.project_id FROM message_extras x JOIN messages m ON m.id=x.message_id WHERE x.message_id=?',Number(messageMedia[1])));if(!x?.media_key)fail('Imagem não encontrada.',404);(await project(x.project_id,u));const bytes=await storage.get(x.media_key);res.writeHead(200,{'Content-Type':x.media_mime,'Cache-Control':'private, max-age=86400','Content-Disposition':'inline'});res.end(bytes);return;}
+    const modelImage=path.match(/^\/api\/model-image\/(\d+)$/);
+    if(modelImage&&method==='GET'){const id=Number(modelImage[1]);(await project(id,u));const m=(await one('SELECT image_key,image_mime FROM model_links WHERE project_id=?',id));if(!m?.image_key)fail('Imagem não encontrada.',404);const bytes=await storage.get(m.image_key);res.writeHead(200,{'Content-Type':m.image_mime,'Cache-Control':'private, max-age=86400','Content-Disposition':'inline'});res.end(bytes);return;}
     const download=path.match(/^\/api\/files\/(\d+)$/);
     if(download&&method==='GET'){const f=(await one('SELECT * FROM files WHERE id=?',Number(download[1])));if(!f)fail('Arquivo não encontrado.',404);(await project(f.project_id,u));const bytes=await storage.get(f.path);res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(f.name).replace(/'/g,'%27')}`});res.end(bytes);return;}
     authorized(u,canOperate(u)?null:['admin']);
@@ -259,6 +288,7 @@ const server=http.createServer(async(req,res)=>{
       validateRequest(req,true);res.setHeader('Cache-Control','no-store');
       const event=await billing.parseWebhook(await rawBody(req),req.headers),result=await billing.handleEvent(event);json(res,{ok:true,...result});return;
     }
+    if(requestPath==='/api/model-links/preview'){await modelPreview(req,res);return;}
     if(requestPath==='/api/billing'||requestPath.startsWith('/api/billing/')){await billingRequest(req,res,requestPath);return;}
     if(requestPath==='/api/messages'||requestPath.startsWith('/api/messages/')){await messagesRequest(req,res,requestPath);if(req.method==='POST')void broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.'));return;}
     if(req.url==='/healthz'&&req.method==='GET'){await db.one('SELECT 1 AS ok');json(res,{ok:true});return;}

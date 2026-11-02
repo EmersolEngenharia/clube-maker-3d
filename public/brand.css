@@ -33,3 +33,15 @@ h1,h2,h3{color:inherit}h1{font-weight:760;letter-spacing:-1.1px}h2{font-weight:7
 .fin-bars,.fin-list{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:12px}.fin-bars svg{width:100%;height:6px;display:block;margin-top:5px}.fin-bars .track{fill:var(--soft)}.fin-bars .fill{fill:var(--turquoise)}.fin-list li{display:flex;justify-content:space-between;gap:10px;align-items:center}.fin-list small{display:block;color:var(--muted)}
 /* Project conversation: images and proposals waiting for the guardian. */
 .message-image{display:block;margin-top:10px}.message-image img{display:block;max-width:100%;max-height:320px;border-radius:10px;border:1px solid var(--border)}.message.proposal{border:1px solid var(--turquoise)}.message.proposal.accepted{border-color:var(--green)}.message.proposal.declined{border-color:var(--flame)}.proposal-status{display:grid;gap:8px;margin-top:10px}.proposal-status .badge{justify-self:start}
+/* Pieces chosen on 3D model sites: link, thumbnail and license check. */
+.grid.choices{grid-template-columns:repeat(3,minmax(0,1fr))}
+.site-links{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 16px}.site-links .icon,.model-card .btn .icon{width:15px;height:15px}
+.model-preview{display:flex;gap:14px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--soft)}.model-card .model-preview{padding:0;border:0;background:none;margin-bottom:14px}
+.model-preview>div{display:grid;gap:4px;min-width:0}.model-preview strong,.model-preview h2{overflow-wrap:anywhere}.model-preview small{color:var(--muted)}
+.model-thumb{width:96px;height:72px;flex:none;object-fit:cover;border-radius:10px;border:1px solid var(--border);background:var(--paper)}.model-thumb.blank{display:grid;place-items:center;color:var(--muted)}.model-thumb.blank .icon{width:30px;height:30px}
+.model-card>.btn{justify-self:start;display:inline-flex;align-items:center;gap:8px;text-decoration:none}.model-card{display:grid;gap:10px}
+.license-chip{display:inline-flex;align-items:center;gap:6px;justify-self:start;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;border:1px solid var(--border)}.license-chip .icon{width:13px;height:13px}.license-chip.open{color:var(--green)}.license-chip.warn{color:#9a4a12;background:#fff1e6;border-color:#f3cfb0}
+.license-notice{align-items:flex-start}.license-notice .btn{margin-top:8px}
+.row-model{display:flex;gap:10px;align-items:center}.row-model .model-thumb{width:52px;height:40px;border-radius:8px}.row-model .license-chip{margin-top:4px}
+.project-art img{width:100%;height:100%;object-fit:cover}
+@media(max-width:760px){.grid.choices{grid-template-columns:1fr}.choice{min-height:0}.model-thumb{width:80px;height:60px}}
