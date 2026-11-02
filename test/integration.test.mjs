@@ -73,5 +73,19 @@ test('ciclo completo e fronteiras de segurança do clube',async t=>{
   await guardian(`/gallery/${g1.id}/authorize`,{allow:false});assert.ok(!(await other('/gallery')).items.some(g=>g.id===g1.id));assert.equal((await guardian('/gallery')).items.find(g=>g.id===g1.id).maker,null);
   await other(`/gallery/${g2.id}/remove`,{},403);await admin(`/gallery/${g2.id}/remove`,{});assert.ok(!(await admin('/gallery')).items.some(g=>g.id===g2.id));
  });
+ await t.test('responsável entra na conta do dependente e volta',async()=>{
+  async function req(jar,path,b,expected=200){const r=await fetch(base+'/api'+path,{method:b===undefined?'GET':'POST',headers:{...(b===undefined?{}:{'Content-Type':'application/json'}),Cookie:Object.entries(jar).map(([k,v])=>k+'='+v).join('; ')},body:b===undefined?undefined:JSON.stringify(b)});for(const c of r.headers.getSetCookie()){const kv=c.split(';')[0],at=kv.indexOf('='),v=kv.slice(at+1);if(v)jar[kv.slice(0,at)]=v;else delete jar[kv.slice(0,at)];}const result=await r.json();assert.equal(r.status,expected,`${path}: ${JSON.stringify(result)}`);return result;}
+  const jar={};await req(jar,'/login',{email:'guardian@example.test',password:pass});const me=(await req(jar,'/session')).user;
+  await guardian('/participants',{name:'Bia'});const bia=(await req(jar,'/family-accounts')).accounts.find(a=>a.name==='Bia');assert.equal(bia.userId,null);
+  await learner('/family-accounts',undefined,403);assert.ok([403,404].includes((await other('/family-accounts/enter',{participantId:bia.participantId},null)).status));
+  await req(jar,'/family-accounts/enter',{participantId:bia.participantId});let s=(await req(jar,'/session')).user;assert.deepEqual([s.name,s.role,s.guardian],['Bia','learner',me.name]);const biaId=s.id;
+  await req(jar,'/family-accounts/enter',{participantId:bia.participantId},403);
+  assert.equal((await guardian('/family-accounts')).accounts.find(a=>a.name==='Bia').userId,biaId);
+  await req(jar,'/family-accounts/return',{});s=(await req(jar,'/session')).user;assert.deepEqual([s.id,s.guardian,'maker_guardian' in jar],[me.id,null,false]);
+  await req(jar,'/family-accounts/return',{},403);
+  await req(jar,'/family-accounts/enter',{userId:biaId});assert.equal((await req(jar,'/session')).user.id,biaId);
+  await req(jar,'/logout',{});assert.equal((await req(jar,'/session')).user,null);
+  await anonymous('/login',{email:`dependente-${bia.participantId}@maker3d.invalid`,password:pass},401);
+ });
  await t.test('origem externa rejeitada e saída encerra sessão',async()=>{await guardian('/participants',{name:'Intruso'},403,{Origin:'https://untrusted.example'});await guardian('/logout',{});await guardian('/dashboard',undefined,401);});
 });

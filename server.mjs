@@ -40,13 +40,27 @@ async function event(id,text){(await run('INSERT INTO events(project_id,text,cre
 const attempts=new Map();
 function rate(req){const key=process.env.TRUST_PROXY==='1'?(req.headers['x-real-ip']||req.socket.remoteAddress):req.socket.remoteAddress;let v=attempts.get(key);if(!v||v.until<Date.now()){v={n:0,until:Date.now()+600000};attempts.set(key,v);}if(++v.n>35)fail('Muitas tentativas. Aguarde 10 minutos.',429);}
 async function body(req){if(req.parsedBody!==undefined)return req.parsedBody;let chunks=[],length=0;for await(const chunk of req){length+=chunk.length;if(length>15*1024*1024)fail('O envio deve ter no máximo 10 MB.',413);chunks.push(chunk);}try{const parsed=JSON.parse(Buffer.concat(chunks).toString()||'{}');if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))fail('Dados inválidos.');return req.parsedBody=parsed;}catch{fail('Dados inválidos.');}}
-async function user(req){const token=(req.headers.cookie||'').split(';').map(s=>s.trim()).find(s=>s.startsWith('maker_session='))?.slice(14);return token?(await one("SELECT u.id,u.email,u.name,u.role,u.family_id,t.user_id is_staff,(SELECT access_role FROM team_permissions WHERE user_id=u.id AND t.user_id IS NOT NULL) team_role,(SELECT whatsapp FROM guardian_contacts WHERE user_id=u.id) whatsapp,COALESCE(p.theme,'atelier') theme,COALESCE(p.avatar,'robot') avatar,COALESCE(p.experience,'guided') experience,CASE WHEN p.photo_key IS NOT NULL THEN 1 ELSE 0 END has_photo FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE s.token=? AND s.expires>?",hash(token),Date.now())):null;}
+async function user(req){const token=readCookie(req,'maker_session');return token?(await one("SELECT u.id,u.email,u.name,u.role,u.family_id,t.user_id is_staff,(SELECT access_role FROM team_permissions WHERE user_id=u.id AND t.user_id IS NOT NULL) team_role,(SELECT whatsapp FROM guardian_contacts WHERE user_id=u.id) whatsapp,COALESCE(p.theme,'atelier') theme,COALESCE(p.avatar,'robot') avatar,COALESCE(p.experience,'guided') experience,CASE WHEN p.photo_key IS NOT NULL THEN 1 ELSE 0 END has_photo FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE s.token=? AND s.expires>?",hash(token),Date.now())):null;}
 function authorized(u,roles){if(!u)fail('Entre na sua conta para continuar.',401);if(roles&&!roles.includes(u.role)&&!(roles.includes('admin')&&isAdmin(u)))fail('Esta ação é exclusiva do responsável autorizado.',403);}
 async function project(id,u){authorized(u);const p=(await one('SELECT * FROM projects WHERE id=?',id));if(!p)fail('Projeto não encontrado.',404);if(!isTeam(u)&&p.family_id!==u.family_id)fail('Projeto não encontrado.',404);return p;}
 const quota=createQuota(db);
 const familyBalance=id=>quota.balance(id);
 async function quote(p){const a=allocation(p.minutes,(await familyBalance(p.family_id)).available,p.extra_rate);return {...a,materialCost:Math.round(p.grams*p.material_rate/1000),total:a.extraCost+Math.round(p.grams*p.material_rate/1000)};}
-async function login(res,id,req){await run('DELETE FROM sessions WHERE expires<?',Date.now());const token=randomBytes(32).toString('hex');(await run('INSERT INTO sessions VALUES(?,?,?)',hash(token),id,Date.now()+7*86400000));res.setHeader('Set-Cookie',`maker_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${process.env.COOKIE_SECURE==='1'?'; Secure':''}`);}
+const cookie=(name,value,age)=>`${name}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${process.env.COOKIE_SECURE==='1'?'; Secure':''}`;
+const readCookie=(req,name)=>(req.headers.cookie||'').split(';').map(s=>s.trim()).find(s=>s.startsWith(name+'='))?.slice(name.length+1);
+async function newSession(id){await run('DELETE FROM sessions WHERE expires<?',Date.now());const token=randomBytes(32).toString('hex');(await run('INSERT INTO sessions VALUES(?,?,?)',hash(token),id,Date.now()+7*86400000));return token;}
+async function login(res,id,req){res.setHeader('Set-Cookie',cookie('maker_session',await newSession(id),604800));}
+// A guardian can enter a dependent's account without a password. The guardian's own session token waits in
+// maker_guardian so they can come back. Dependents registered only by name get a learner account on first use,
+// found again by a reserved e-mail (.invalid never delivers) and a random password nobody knows.
+const dependentEmail=id=>`dependente-${id}@maker3d.invalid`;
+const guardianOf=u=>u&&(u.role==='guardian'||(u.role==='admin'&&u.family_id));
+async function guardianSession(req,u){const token=readCookie(req,'maker_guardian');if(!token||u?.role!=='learner')return null;const g=await one('SELECT u.id,u.name,u.role,u.family_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>?',hash(token),Date.now());return guardianOf(g)&&g.family_id===u.family_id?{token,name:g.name}:null;}
+async function familyAccounts(u){const ps=await all("SELECT p.id,p.name FROM participants p LEFT JOIN participant_settings s ON s.participant_id=p.id WHERE p.family_id=? AND COALESCE(s.active,1)=1 ORDER BY p.name",u.family_id);
+ const users=await all("SELECT u.id,u.name,u.email,COALESCE(p.avatar,'robot') avatar,CASE WHEN p.photo_key IS NOT NULL THEN 1 ELSE 0 END has_photo FROM users u LEFT JOIN user_preferences p ON p.user_id=u.id WHERE u.family_id=? AND u.role='learner' ORDER BY u.name",u.family_id);
+ const byEmail=new Map(users.map(a=>[a.email,a])),own=users.filter(a=>!a.email.endsWith('@maker3d.invalid')),names=new Set(own.map(a=>a.name.trim().toLowerCase()));
+ const same=n=>ps.find(p=>p.name.trim().toLowerCase()===n.trim().toLowerCase())?.id??null;
+ return [...own.map(a=>({userId:a.id,participantId:same(a.name),name:a.name,avatar:a.avatar,has_photo:a.has_photo})),...ps.filter(p=>!names.has(p.name.trim().toLowerCase())).map(p=>{const a=byEmail.get(dependentEmail(p.id));return {participantId:p.id,userId:a?.id??null,name:p.name,avatar:a?.avatar??'robot',has_photo:a?.has_photo??0};})];}
 function json(res,obj,status=200){if(res.deferJson){res.pendingJson={obj,status};return;}res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(obj));}
 
 function validateRequest(req,webhook=false){
@@ -126,7 +140,7 @@ async function handle(req,res){
     if(path==='/api/staff-register'&&method==='POST')rate(req);
     if(await operations.publicRoute(req,res,path,method))return;
     if(await features.publicRoute(req,res,path,method))return;
-    if(path==='/api/session'&&method==='GET'){return json(res,{user:u&&{...u,can_broadcast:await broadcasts.owner(u)},setup:process.env.NODE_ENV!=='production'&&!(await one('SELECT id FROM users LIMIT 1')),config:(await config())});}
+    if(path==='/api/session'&&method==='GET'){return json(res,{user:u&&{...u,can_broadcast:await broadcasts.owner(u),guardian:(await guardianSession(req,u))?.name??null},setup:process.env.NODE_ENV!=='production'&&!(await one('SELECT id FROM users LIMIT 1')),config:(await config())});}
     if(path==='/api/setup'&&method==='POST'){
       if(process.env.NODE_ENV==='production')fail('A conta inicial é criada pelo administrador do servidor.',403);
       rate(req);
@@ -151,7 +165,15 @@ async function handle(req,res){
     if(await operations.route(req,res,path,method,u))return;
     if(await features.route(req,res,path,method,u))return;
     if(await gallery.route(req,res,path,method,u))return;
-    if(path==='/api/logout'&&method==='POST'){(await run('DELETE FROM sessions WHERE user_id=?',u.id));res.setHeader('Set-Cookie','maker_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,{ok:true});}
+    if(path==='/api/logout'&&method==='POST'){const g=await guardianSession(req,u);if(g)await run('DELETE FROM sessions WHERE token=?',hash(g.token));(await run('DELETE FROM sessions WHERE user_id=?',u.id));res.setHeader('Set-Cookie',[cookie('maker_session','',0),cookie('maker_guardian','',0)]);return json(res,{ok:true});}
+    if(path==='/api/family-accounts'&&method==='GET'){if(!guardianOf(u))fail('Esta ação é exclusiva do responsável.',403);return json(res,{accounts:await familyAccounts(u)});}
+    if(path==='/api/family-accounts/enter'&&method==='POST'){
+      if(!guardianOf(u))fail('Esta ação é exclusiva do responsável.',403);const b=await body(req),accounts=await familyAccounts(u);
+      const target=b.userId?accounts.find(a=>a.userId===Number(b.userId)):accounts.find(a=>a.participantId&&a.participantId===Number(b.participantId));if(!target)fail('Dependente não encontrado.',404);
+      let id=target.userId;if(!id){const email=dependentEmail(target.participantId);id=(await one('SELECT id FROM users WHERE email=?',email))?.id??Number((await run('INSERT INTO users(email,name,password,role,family_id) VALUES(?,?,?,?,?)',email,target.name,await password(randomBytes(24).toString('hex')),'learner',u.family_id)).lastInsertRowid);}
+      const own=readCookie(req,'maker_session');res.setHeader('Set-Cookie',[cookie('maker_guardian',own,604800),cookie('maker_session',await newSession(id),604800)]);return json(res,{ok:true});
+    }
+    if(path==='/api/family-accounts/return'&&method==='POST'){const g=await guardianSession(req,u);if(!g)fail('Entre novamente com a conta do responsável.',403);await run('DELETE FROM sessions WHERE token=?',hash(readCookie(req,'maker_session')));res.setHeader('Set-Cookie',[cookie('maker_session',g.token,604800),cookie('maker_guardian','',0)]);return json(res,{ok:true});}
     if(path==='/api/dashboard'&&method==='GET'){
       const team=isTeam(u),fid=u.family_id;
       const scoped=(sql,clause='family_id')=>({sql:sql+(team?'':' WHERE '+clause+'=?'),params:team?[]:[fid]});
