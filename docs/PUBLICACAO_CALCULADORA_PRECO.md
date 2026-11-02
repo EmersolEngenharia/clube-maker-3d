@@ -34,3 +34,13 @@ ln -s /opt/maker3d/releases/5f94da9b0b60adffb34c57e73868183b303e09cf /opt/maker3
 mv -Tf /opt/maker3d/current.rollback /opt/maker3d/current
 /opt/maker3d/service.sh up -d --no-build
 ```
+
+## Atualização — horas decimais como no MakerWorld (02/11/2026)
+
+- SHA implantado: `c391a5938c3fb14140e8e630ac3eebf6dbff6bc6` (anterior `92ae293`). Sem migração.
+- Horas de impressão e de trabalho aceitam decimal (1,2 h = 1h12), minutos opcionais; ajuda indica
+  onde ler tempo e gramas no MakerWorld/Bambu Studio e pede para somar as placas.
+- Log: `/opt/maker3d/deploy-c391a5938c3f.log`. Verificado: 77 testes; QA local com 1,2 h e 32 g
+  (R$ 37,90 como modelo pronto); `/healthz` 200; HTTP 301; SHA256 de pricing.js, app.js e styles.css
+  igual ao commit. Rollback: procedimento acima, apontando para o release `92ae293…` e o backup
+  `deploy-c391a5938c3f-*`.
