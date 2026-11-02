@@ -2,7 +2,7 @@ FROM node:24.19.0-bookworm-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-COPY --chown=node:node server.mjs domain.mjs db.mjs storage.mjs features.mjs operations.mjs permissions.mjs quota.mjs ./
+COPY --chown=node:node server.mjs domain.mjs db.mjs storage.mjs features.mjs operations.mjs permissions.mjs quota.mjs models.mjs ./
 COPY --chown=node:node db ./db
 COPY --chown=node:node payments ./payments
 COPY --chown=node:node messaging ./messaging
