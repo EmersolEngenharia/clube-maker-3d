@@ -44,3 +44,12 @@ ln -s /opt/maker3d/releases/a20fece7dc3415660870fd7384b6b2c96d72a9b1 /opt/maker3
 mv -Tf /opt/maker3d/current.rollback /opt/maker3d/current
 /opt/maker3d/service.sh up -d --no-build
 ```
+
+## Atualização — cards compactos das famílias (02/11/2026, ~04:40 Brasília)
+
+- SHA implantado: `5f94da9b0b60adffb34c57e73868183b303e09cf` (anterior `d8a29c8`). Sem migração.
+- "Famílias do clube" (equipe): 4 cards por linha (3 abaixo de 1500 px, 2 abaixo de 1150 px, 1 no
+  celular) e barra de horas resumida; o detalhamento completo segue na visão da própria família.
+- Verificado: 77 testes; QA local a 1800 px com 6 famílias; `/healthz` 200; SHA256 de operations.js e
+  styles.css igual ao commit. Rollback: mesmo procedimento acima, apontando para o release `d8a29c8…`
+  e o backup `deploy-5f94da9b0b60-*`.
