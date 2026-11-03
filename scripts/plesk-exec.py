@@ -3,16 +3,21 @@
 import argparse, base64, getpass, json, pathlib, re, sys, urllib.request
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--password-file', type=pathlib.Path)
+p.add_argument('--api-key-file', type=pathlib.Path, help='Plesk API key (default: ~/.maker3d/plesk-api-key, if present)')
 p.add_argument('--host', default='https://plesk.emersol.ai:8443')
 p.add_argument('--user', default='root')
 p.add_argument('--script', type=pathlib.Path, help='Shell script; otherwise reads stdin')
 a = p.parse_args()
-password = a.password_file.read_text().rstrip('\r\n') if a.password_file else getpass.getpass('Senha Plesk: ')
-auth = 'Basic ' + base64.b64encode((a.user + ':' + password).encode()).decode()
+key_file = a.api_key_file or pathlib.Path.home() / '.maker3d' / 'plesk-api-key'
+if not a.password_file and key_file.is_file():
+    headers = {'X-API-Key': key_file.read_text().strip()}
+else:
+    password = a.password_file.read_text().rstrip('\r\n') if a.password_file else getpass.getpass('Senha Plesk: ')
+    headers = {'Authorization': 'Basic ' + base64.b64encode((a.user + ':' + password).encode()).decode()}
 def api(params):
     req = urllib.request.Request(a.host + '/api/v2/cli/scheduler/call',
         data=json.dumps({'params': params}).encode(),
-        headers={'Authorization': auth, 'Content-Type': 'application/json'})
+        headers={**headers, 'Content-Type': 'application/json'})
     with urllib.request.urlopen(req, timeout=50) as response:
         result = json.load(response)
     if result.get('code') != 0:
