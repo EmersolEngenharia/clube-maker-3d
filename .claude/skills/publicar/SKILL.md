@@ -10,7 +10,7 @@ Autorização permanente do Emerson: publicar sem pedir confirmação. Seja econ
    - Asset novo em `public/` → incluir em `staticFiles` (server.mjs) e nos dois laços de `scripts/deploy-release.sh`.
    - Migração de banco → aplicar antes do deploy e registrar; nunca recriar banco, contas, bucket ou proxy.
 2. `bash scripts/publicar.sh` (em background se possível; leva de 3 a 8 min). Ele busca o commit no GitHub, roda `deploy-release.sh` na VPS (com rollback automático), espera e valida de fora (healthz, 301, SHA256 dos arquivos).
-   - Sem `~/.maker3d/plesk-api-key`: peça ao Emerson para rodar uma vez `python scripts/plesk-criar-chave.py` no terminal (ele digita a senha; você nunca digita nem lê senha ou chave).
+   - Acesso: Tailscale SSH (root@100.100.10.64, srv-plesk), sem senha. Só se o Tailscale estiver fora e não existir `~/.maker3d/plesk-api-key`: peça ao Emerson para rodar uma vez `python scripts/plesk-criar-chave.py` no terminal (ele digita a senha; você nunca digita nem lê senha ou chave).
    - Falhou: mostre o trecho de erro; produção continua na versão anterior. Não repita às cegas.
 3. Registre em uma linha no doc da funcionalidade em `docs/` (SHA, anterior, data, resultado), commit e push. Não publique de novo por causa desse commit de documentação.
 4. Responda curto: o que foi ao ar, SHA, validação.

@@ -7,7 +7,7 @@ Guia operacional para futuras sessões. Leia este arquivo antes de investigar in
 - Portal: https://maker3d.emersol.ai — VPS Plesk 185.215.180.60.
 - Plesk: https://plesk.emersol.ai:8443. API REST administrativa disponível.
 - GitHub: EmersolEngenharia/clube-maker-3d, branch main. `gh` e Git funcionam no ambiente atual; conferir novamente na próxima sessão.
-- SSH direto à porta 22 foi recusado neste ambiente em 31/10/2026. Não repetir tentativas nem reconfigurar SSH/VPN: usar Plesk HTTPS se continuar disponível.
+- SSH direto à porta 22 foi recusado em 31/10/2026; desde 04/11/2026 o acesso é por Tailscale SSH (root@100.100.10.64, srv-plesk), usado por `scripts/publicar.sh`. Não repetir tentativas nem reconfigurar SSH/VPN: usar Plesk HTTPS se continuar disponível.
 - Credencial administrativa existente: registro Notion **Servidor 1 - Sites | Plesk**, ID `204d2717-b36b-80eb-931f-d3fea8fa7b51`. Consultar somente para publicação autorizada; nunca imprimir a página inteira, senha ou tokens. Preferir entrada oculta ou arquivo privado modo 600. Remover cópias temporárias ao terminar.
 - Não usar Sites: a aplicação já está hospedada na VPS.
 

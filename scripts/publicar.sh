@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Publica na VPS existente um commit que já está em origin/main e valida de fora.
-# Uso: bash scripts/publicar.sh [SHA]   (padrão: HEAD). Requer ~/.maker3d/plesk-api-key (scripts/plesk-criar-chave.py).
+# Uso: bash scripts/publicar.sh [SHA]   (padrão: HEAD). Acesso: Tailscale SSH ou ~/.maker3d/plesk-api-key.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PYTHONIOENCODING=utf-8
 sha=$(git rev-parse "${1:-HEAD}") short=${sha:0:12} site=https://maker3d.emersol.ai
 git fetch -q origin main
 git merge-base --is-ancestor "$sha" origin/main || { echo "ERRO: $short não está em origin/main; faça push antes."; exit 1; }
-plesk() { "$(command -v python || command -v python3)" scripts/plesk-exec.py; }
+# Caminho preferido: SSH pelo Tailscale (srv-plesk, sem senha). Sem Tailscale: Plesk HTTPS com a chave de API.
+vps=root@100.100.10.64
+if ssh -o BatchMode=yes -o ConnectTimeout=8 $vps true 2>/dev/null; then plesk() { ssh -o BatchMode=yes $vps bash; }
+else plesk() { "$(command -v python || command -v python3)" scripts/plesk-exec.py; }; fi
 log=/opt/maker3d/deploy-$short.log
 if echo 'readlink -f /opt/maker3d/current' | plesk | grep -q "/$sha"; then
   echo "Produção já está em $short."
