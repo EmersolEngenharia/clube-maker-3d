@@ -1,0 +1,77 @@
+# Testa e publica o Clube Maker 3D na VPS da Emersol (https://maker3d.emersol.ai).
+#
+# Diferente do emersoft-emersol-ai (SPA estática com rsync), aqui o app é um servidor Node em Docker.
+# O Actions só roda os testes e pede à VPS "deploy <SHA>" por SSH; quem constrói a imagem, troca a
+# versão e faz rollback é scripts/deploy-release.sh, na própria VPS. A chave só executa esse comando
+# (comando forçado em authorized_keys; ver scripts/vps-instalar-deploy-automatico.sh).
+#
+# Secret necessário (Settings › Secrets and variables › Actions):
+#   VPS_SSH_KEY_B64  chave privada ed25519 de deploy em base64, uma linha só. No PowerShell:
+#                    ssh root@100.100.10.64 "base64 -w0 /root/.ssh/maker3d_deploy" | clip
+# Variável:
+#   DEPLOY_VPS       'true' liga a publicação a cada push na main. Sem ela só o botão "Run workflow" publica.
+name: Testes e publicação na VPS
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:
+
+# Não cancela um deploy em andamento: o rollback depende de ele terminar.
+concurrency:
+  group: deploy-maker3d
+  cancel-in-progress: false
+
+env:
+  VPS_HOST: 185.215.180.60
+  # Chave pública do servidor (/etc/ssh/ssh_host_ed25519_key.pub): fixa o destino, sem confiar no primeiro contato.
+  VPS_HOST_KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAm9KF2YEjO7jcHJIoAuMsbbjiXz4o3+pDnQBC7eaXBU
+  SITE: https://maker3d.emersol.ai
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  publicar:
+    needs: testes
+    if: vars.DEPLOY_VPS == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Base64 numa linha só evita o "error in libcrypto" de chaves coladas sem quebras de linha;
+      # ssh-keygen -y valida a chave antes de conectar, sem expô-la no log.
+      - name: Configurar chave SSH
+        env:
+          KEY_B64: ${{ secrets.VPS_SSH_KEY_B64 }}
+        run: |
+          [ -n "$KEY_B64" ] || { echo "::error::Falta o secret VPS_SSH_KEY_B64."; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s' "$KEY_B64" | tr -d ' \n\r\t' | base64 -d > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null 2>&1 || { echo "::error::VPS_SSH_KEY_B64 não é uma chave privada válida (gere com base64 -w0 no servidor)."; exit 1; }
+          echo "$VPS_HOST $VPS_HOST_KEY" > ~/.ssh/known_hosts
+
+      - name: Publicar na VPS
+        run: ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o BatchMode=yes root@"$VPS_HOST" "deploy ${{ github.sha }}"
+
+      # Confere de fora: o site responde e os arquivos servidos são os deste commit.
+      - name: Conferir produção
+        run: |
+          for i in $(seq 1 12); do code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/healthz"); [ "$code" = 200 ] && break; sleep 5; done
+          echo "healthz: $code"; test "$code" = 200
+          for f in app.js features.js operations.js billing.js gallery.js pricing.js styles.css brand.css brand-icon.svg; do
+            [ "$(curl -fsS "$SITE/$f" | sha256sum)" = "$(sha256sum < public/$f)" ] || { echo "::error::$f servido é diferente do commit"; exit 1; }
+          done
+          echo "Produção confere com ${GITHUB_SHA::12}."
