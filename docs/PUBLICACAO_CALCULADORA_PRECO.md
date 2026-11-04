@@ -56,3 +56,9 @@ mv -Tf /opt/maker3d/current.rollback /opt/maker3d/current
   rolar) e 375×812, tema escuro; externo: um 502 isolado logo após a troca e depois `/healthz` 200
   por 1 min seguido; SHA256 de pricing.js, app.js e styles.css igual ao commit. Rollback: procedimento
   acima, apontando para o release `c391a59…` e o backup `deploy-04fb7ce12d5f-*`.
+
+## Atualização — ícones, interruptores e orçamento em imagem (04/11/2026)
+
+- SHA implantado: `01c72d47e2760e12b92626de504d73bbb59f7064` (funcionalidade em `c1148f1`; anterior `04fb7ce`). Sem migração.
+- Primeira publicação automática por `scripts/publicar.sh` via Tailscale SSH. Backup `deploy-01c72d47e276-20261104T042528Z`.
+- Verificado: 77 testes; `DEPLOY_EXIT=0`; externo `/healthz` 200, HTTP 301, SHA256 dos assets igual ao commit.
