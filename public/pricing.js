@@ -56,7 +56,7 @@ function pricingPhotoHtml(){
 }
 function pricingResultHtml(){
  const p=pricingState(),r=pricingCalc(p),level=pricingLevel(p);
- return `<div class="quote"><div class="quote-top"><img src="/brand-icon.svg" alt="" width="40" height="40"><div><b>Clube Maker 3D</b><small>EMERSOL · ORÇAMENTO</small></div></div>
+ return `<div class="quote"><div class="quote-top"><img src="${asset('brand-icon.svg')}" alt="" width="40" height="40"><div><b>Clube Maker 3D</b><small>EMERSOL · ORÇAMENTO</small></div></div>
  <div class="quote-media">${pricingPhotoHtml()}</div>
  <div class="quote-body"><h3>${esc(p.name||'Sua peça')}</h3><span class="quote-chip">${icon(level[4])} ${esc(level[1])}</span>
  <div class="quote-price">${money(r.price)}<small>por peça</small></div>
@@ -107,7 +107,7 @@ async function pricingImage(){
  const font=getComputedStyle(document.body).fontFamily||'sans-serif',f=(w,s)=>`${w} ${s}px ${font}`;
  c.width=W;c.height=H;
  const bg=ctx.createLinearGradient(0,0,W,H);bg.addColorStop(0,'#1d3560');bg.addColorStop(1,'#101c33');ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
- const logo=await pricingLoadImage('/brand-icon.svg');
+ const logo=await pricingLoadImage(asset('brand-icon.svg'));
  ctx.drawImage(logo,60,48,120,120);
  ctx.fillStyle='#fff';ctx.font=f(800,52);ctx.fillText('Clube Maker 3D',196,112);
  ctx.fillStyle='#13c4d0';ctx.font=f(700,28);ctx.fillText('EMERSOL · ORÇAMENTO',198,152);
