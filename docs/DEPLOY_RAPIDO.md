@@ -37,3 +37,7 @@ Ler `previous-release.txt` no backup da implantação. Restaurar sua cópia de `
 ## Limites
 
 Atualização visual não exige migração, bootstrap, rotação de senha, novo certificado, alteração do proxy ou reinício global do Plesk. Para mudança de schema/persistência ou reconstrução, ler também `docs/PROMPT_PLESK.md` e a documentação Supabase pertinente. O último registro de produção deve ser conferido na VPS; referências históricas não substituem o estado real.
+
+## Publicação automática (desde 04/11/2026)
+
+Push na `main` → GitHub Actions (`.github/workflows/deploy.yml`) roda `npm test` e pede à VPS `deploy <SHA>` por SSH com a chave restrita `maker3d-github-actions` (comando forçado `/opt/maker3d/deploy-gate.sh`, instalado por `scripts/vps-instalar-deploy-automatico.sh`). A VPS roda `deploy-release.sh` (rollback automático) e o Actions confere o site por fora. Secret `VPS_SSH_KEY_B64`; variável `DEPLOY_VPS=true`. Primeiro deploy: run 41776423445 (e82caab). `scripts/publicar.sh` fica como reserva. Revogar: apagar a linha da chave em `/root/.ssh/authorized_keys` e o secret.
