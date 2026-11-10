@@ -20,6 +20,7 @@ import { parseModelLink, lookupModel, licenseLevel } from './models.mjs';
 import { createGallery } from './gallery.mjs';
 import { createSchedule } from './schedule.mjs';
 import { createPrinter } from './printer.mjs';
+import { createHomeAssistant } from './homeassistant.mjs';
 
 if(process.env.NODE_ENV==='production'&&(!process.env.PUBLIC_ORIGIN?.startsWith('https://')||process.env.COOKIE_SECURE!=='1'))throw new Error('Produção exige PUBLIC_ORIGIN HTTPS e COOKIE_SECURE=1.');
 const root=dirname(fileURLToPath(import.meta.url));
@@ -86,6 +87,15 @@ async function messagesRequest(req,res,path){
  if(path==='/api/messages'&&method==='POST')return json(res,await broadcasts.create(u,b));
  if(path==='/api/messages/retry'&&method==='POST')return json(res,await broadcasts.retry(u,b.id,b.confirmed));
  if(path==='/api/messages/cancel'&&method==='POST')return json(res,await broadcasts.cancel(u,b.id));
+ fail('Rota não encontrada.',404);
+}
+// Home Assistant connection: talks to the club's Home Assistant over the network, so it runs outside a transaction.
+async function homeAssistantRequest(req,res,path){
+ validateRequest(req);res.setHeader('Cache-Control','no-store');
+ const u=await db.withRequest(()=>user(req));authorized(u);if(!isAdmin(u))fail('Ação exclusiva da administração.',403);
+ if(req.method==='GET'&&path==='/api/printer/homeassistant')return json(res,await homeAssistant.view());
+ if(req.method==='POST'&&path==='/api/printer/homeassistant'){const b=await body(req);const r=await homeAssistant.connect(b);await db.transaction(()=>run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'printer.homeassistant','1',now()));return json(res,r);}
+ if(req.method==='POST'&&path==='/api/printer/homeassistant/remove'){await body(req);const r=await homeAssistant.remove();await db.transaction(()=>run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'printer.homeassistant.remove','1',now()));return json(res,r);}
  fail('Rota não encontrada.',404);
 }
 async function billingRequest(req,res,path){
@@ -306,7 +316,10 @@ const broadcasts=createBroadcasts({db,storage,fail});
 const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.')),20000);broadcastTimer.unref();
 const schedule=createSchedule({db,quota,billing,broadcasts,config,fail,str,num,integer,body,json,event});
 await db.transaction(()=>schedule.backfill());
-const printer=createPrinter({db,fail,onEvent:(kind,info)=>schedule.onPrinter(kind,info),printingFamily:()=>schedule.printingFamily()});
+const printer=createPrinter({db,fail,onEvent:(kind,info)=>schedule.onPrinter(kind,info),printingFamily:()=>schedule.printingFamily(),otherSource:()=>homeAssistant.active()});
+const homeAssistant=createHomeAssistant({db,fail,ingest:(status,image)=>printer.ingest(status,image)});
+await homeAssistant.load();
+const haTimer=setInterval(()=>{void homeAssistant.tick();},15000);haTimer.unref();
 const scheduleTick=()=>{void schedule.tick().then(()=>automation.tick()).catch(()=>console.error('Falha no ciclo da agenda.'));};
 const scheduleTimer=setInterval(scheduleTick,60000);scheduleTimer.unref();
 // Static assets are compressed once at startup. index.html points to /file?v=<hash>, so browsers
@@ -327,6 +340,7 @@ const server=http.createServer(async(req,res)=>{
     }
     if(requestPath==='/api/printer/report'&&req.method==='POST'){validateRequest(req,true);res.setHeader('Cache-Control','no-store');json(res,await printer.report(await rawBody(req,3*1024*1024),req.headers));return;}
     if(requestPath==='/api/model-links/preview'){await modelPreview(req,res);return;}
+    if(requestPath.startsWith('/api/printer/homeassistant')){await homeAssistantRequest(req,res,requestPath);return;}
     if(requestPath==='/api/billing'||requestPath.startsWith('/api/billing/')){await billingRequest(req,res,requestPath);if(req.method==='POST')scheduleTick();return;}
     if(requestPath==='/api/messages'||requestPath.startsWith('/api/messages/')){await messagesRequest(req,res,requestPath);if(req.method==='POST')void broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.'));return;}
     if(req.url==='/healthz'&&req.method==='GET'){await db.one('SELECT 1 AS ok');json(res,{ok:true});return;}
@@ -345,4 +359,4 @@ const server=http.createServer(async(req,res)=>{
 });
 server.listen(Number(process.env.PORT||3000),process.env.HOST||'127.0.0.1',()=>console.log(`Clube Maker 3D disponível em http://${process.env.HOST||'127.0.0.1'}:${process.env.PORT||3000}`));
 
-for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{clearInterval(automationTimer);clearInterval(broadcastTimer);clearInterval(scheduleTimer);server.close(async()=>{await db.close();process.exit(0);});});
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{clearInterval(automationTimer);clearInterval(broadcastTimer);clearInterval(scheduleTimer);clearInterval(haTimer);server.close(async()=>{await db.close();process.exit(0);});});

@@ -24,9 +24,10 @@ async function schedLive(){
 }
 function printerCard(){
  const p=state.printer;if(!p||(!p.configured&&!teamUser()))return '<div id="printer-card" hidden></div>';
- if(!p.configured)return `<section id="printer-card" class="card printer-card"><div class="eyebrow">IMPRESSORA AO VIVO</div><p class="muted">A ponte da impressora ainda não foi ligada. Veja o passo a passo em docs/IMPRESSORA.md.</p></section>`;
+ const setup=state.schedule?.canConfigure?btn(icon('settings')+(p.configured?' Conexão':' Conectar a impressora'),'printer-ha','secondary small'):'';
+ if(!p.configured)return `<section id="printer-card" class="card printer-card"><div class="row spread"><div class="eyebrow">IMPRESSORA AO VIVO</div>${setup}</div><p class="muted">A impressora ainda não está conectada ao portal.${setup?' Conecte pelo Home Assistant da Emersol.':''}</p></section>`;
  const working=['printing','paused'].includes(p.state);
- return `<section id="printer-card" class="card printer-card ${p.state}"><div class="row spread"><div><div class="eyebrow">IMPRESSORA AO VIVO</div><h2><span class="printer-dot"></span>${printerLabels[p.state]}</h2></div>${icon('printer')}</div>${working&&p.percent!=null?`<progress max="100" value="${p.percent}" aria-label="Progresso da impressão"></progress><p class="printer-numbers"><strong>${Math.round(p.percent)}%</strong>${p.remainingMinutes!=null?` · faltam cerca de ${schedSpan(p.remainingMinutes)}`:''}${p.totalLayers?` · camada ${p.layer||0} de ${p.totalLayers}`:''}</p>`:''}${p.camera?`<img id="printer-live" class="printer-live" src="/api/printer/snapshot?t=${Date.now()}" alt="Imagem ao vivo da impressão" width="960" height="540"><p class="field-help">Imagem ao vivo, atualizada a cada 5 segundos. Só a sua família e a equipe veem a sua peça.</p>`:working&&!teamUser()?'<p class="field-help">A imagem ao vivo aparece quando a peça na impressora é da sua família.</p>':''}${teamUser()&&p.online?`<p class="field-help">${[p.job?'Arquivo: '+esc(p.job):'',p.nozzle!=null?`bico ${Math.round(p.nozzle)} °C`:'',p.bed!=null?`mesa ${Math.round(p.bed)} °C`:'',p.lastMinutes?`último trabalho: ${schedSpan(p.lastMinutes)} medidos`:''].filter(Boolean).join(' · ')}</p>`:''}${!p.online?`<p class="field-help">Última leitura: ${schedWhen(p.updated)}.</p>`:''}</section>`;
+ return `<section id="printer-card" class="card printer-card ${p.state}"><div class="row spread"><div><div class="eyebrow">IMPRESSORA AO VIVO</div><h2><span class="printer-dot"></span>${printerLabels[p.state]}</h2></div>${setup||icon('printer')}</div>${working&&p.percent!=null?`<progress max="100" value="${p.percent}" aria-label="Progresso da impressão"></progress><p class="printer-numbers"><strong>${Math.round(p.percent)}%</strong>${p.remainingMinutes!=null?` · faltam cerca de ${schedSpan(p.remainingMinutes)}`:''}${p.totalLayers?` · camada ${p.layer||0} de ${p.totalLayers}`:''}</p>`:''}${p.camera?`<img id="printer-live" class="printer-live" src="/api/printer/snapshot?t=${Date.now()}" alt="Imagem ao vivo da impressão" width="960" height="540"><p class="field-help">Imagem ao vivo, atualizada a cada 5 segundos. Só a sua família e a equipe veem a sua peça.</p>`:working&&!teamUser()?'<p class="field-help">A imagem ao vivo aparece quando a peça na impressora é da sua família.</p>':''}${teamUser()&&p.online?`<p class="field-help">${[p.job?'Arquivo: '+esc(p.job):'',p.nozzle!=null?`bico ${Math.round(p.nozzle)} °C`:'',p.bed!=null?`mesa ${Math.round(p.bed)} °C`:'',p.lastMinutes?`último trabalho: ${schedSpan(p.lastMinutes)} medidos`:''].filter(Boolean).join(' · ')}</p>`:''}${!p.online?`<p class="field-help">Última leitura: ${schedWhen(p.updated)}.</p>`:''}</section>`;
 }
 function calendarSvg(){
  const s=state.schedule,cfg=s.settings,days=s.days,col=132,left=46,top=34,hour=20,H=top+24*hour,W=left+days*col,start=Date.parse(s.from),now=Date.parse(s.now),DAY=86400000;
@@ -120,6 +121,8 @@ async function scheduleAction(action,target){
  const id=Number(target.dataset.id);
  switch(action){
   case'booking-new':bookingDialog();return true;
+  case'printer-ha':{const v=await api('/printer/homeassistant');printerHaDialog(v);return true;}
+  case'printer-ha-remove':if(!confirm('Desconectar a impressora do portal?'))return true;await api('/printer/homeassistant/remove',{});await scheduleReload('Impressora desconectada.');return true;
   case'schedule-open':state.page='schedule';await refresh({navigate:true});return true;
   case'booking-edit':bookingEditDialog(id);return true;
   case'booking-filament-add':{const form=target.closest('form'),box=$('.filaments',form);if(box.children.length>=4)throw new Error('Até quatro filamentos por impressão.');const mat=state.data.config.materials.find(m=>m.active);box.insertAdjacentHTML('beforeend',filamentRow({material:mat?.name,color:mat?.colors[0],grams:''},box.children.length));return true;}
@@ -135,6 +138,15 @@ async function scheduleAction(action,target){
  }
  return false;
 }
+function printerHaDialog(v,list=null){
+ const fixed=v.source==='servidor',when=t=>t?new Date(t).toLocaleString('pt-BR'):'';
+ modal('Conectar a impressora',`${v.configured?`<div class="notice"><div><h3>${v.printer?`${esc(v.printer.name)}${v.printer.model?' · '+esc(v.printer.model):''}`:'Conectado ao Home Assistant'}</h3><p>${esc(v.url)}${v.printer&&!v.printer.camera?' · sem câmera':''}</p><p class="field-help">${v.lastError?'⚠️ '+esc(v.lastError):v.lastOk?'Última leitura: '+when(v.lastOk):'Aguardando a primeira leitura…'}</p></div></div>`:''}
+ <form id="printer-ha-form" class="stack">${fixed?'<p>A conexão está definida no servidor. Use o botão para procurar a impressora de novo.</p>':`<ol class="rule-list"><li><strong>No Home Assistant</strong>Instale a integração <b>Bambu Lab</b> (HACS → ha-bambulab), adicione a X2D com o código de acesso da tela da impressora e confira se a câmera aparece.</li><li><strong>Token</strong>Perfil do usuário administrador → Segurança → Tokens de acesso de longa duração → Criar token.</li><li><strong>Endereço</strong>O do Home Assistant no Tailscale, como <code>http://100.x.y.z:8123</code> ou <code>http://homeassistant.seu-tailnet.ts.net:8123</code>.</li></ol>
+ <label>Endereço do Home Assistant<input name="url" type="url" required maxlength="200" placeholder="http://100.101.102.103:8123" value="${esc(v.url||'')}"></label>
+ <label>Token de longa duração<input name="token" type="password" autocomplete="off" maxlength="2000" ${v.configured?'placeholder="Deixe em branco para manter o atual"':'required'}><span class="field-help">Fica criptografado no servidor e nunca é mostrado de novo.</span></label>`}
+ ${list&&list.length>1?`<label>Impressora<select name="deviceId">${list.map(p=>`<option value="${esc(p.deviceId)}">${esc(p.name)}${p.model?' · '+esc(p.model):''}</option>`).join('')}</select></label>`:''}
+ <div class="row"><button class="btn" type="submit">${v.configured?'Procurar e salvar':'Procurar a impressora e conectar'}</button>${v.configured&&!fixed?btn('Desconectar','printer-ha-remove','secondary'):''}</div></form>`);
+}
 async function scheduleSubmit(form){
  if(form.id==='booking-form'){
   const e=form.elements,file=e.printFile.files[0],v=readBooking(form);if(!v.startsAt)throw new Error('Escolha o início.');
@@ -144,6 +156,7 @@ async function scheduleSubmit(form){
   close();await openProject(r.id);toast(note);return true;
  }
  if(form.id==='booking-edit-form'){const {projectId,...v}=readBooking(form);await api(`/schedule/bookings/${form.dataset.id}/update`,{...v,...(form.elements.note?{note:form.elements.note.value}:{})});await scheduleReload('Agendamento atualizado.');return true;}
+ if(form.id==='printer-ha-form'){const e=form.elements,r=await api('/printer/homeassistant',{url:e.url?.value,token:e.token?.value||undefined,deviceId:e.deviceId?.value});toast(`Impressora encontrada: ${r.printer.name}${r.printer.model?' ('+r.printer.model+')':''}.`);if(r.printers.length>1&&!e.deviceId){printerHaDialog(r,r.printers);return true;}close();setTimeout(()=>{if(state.page==='schedule')loadSchedule().then(render).catch(()=>{});},4000);await loadSchedule();render();return true;}
  if(form.id==='schedule-block-form'){const e=form.elements;await api('/schedule/blocks',{startsAt:new Date(e.startsAt.value).toISOString(),endsAt:new Date(e.endsAt.value).toISOString(),reason:e.reason.value});await scheduleReload('Período bloqueado.');return true;}
  if(form.id==='schedule-settings-form'){const e=form.elements,n=k=>Number(e[k].value);await api('/schedule/settings',{open:e.open.value,close:e.close.value,days:[...form.querySelectorAll('[name=day]:checked')].map(c=>Number(c.value)),buffer:n('buffer'),lead:n('lead'),horizon:n('horizon'),maxMinutes:n('maxMinutes'),maxActive:n('maxActive'),pickupDays:n('pickupDays'),chargeWhen:e.chargeWhen.value,pickupPlace:e.pickupPlace.value,teamWhatsapp:e.teamWhatsapp.value.split(',').map(s=>s.trim()).filter(Boolean)});await scheduleReload('Regras salvas.');return true;}
  return false;
