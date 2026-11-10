@@ -201,7 +201,7 @@ test('impressora inicia o pedido sozinha, a tela de conclusão vem preenchida e 
  // The printer finished: the team sees the measured time and the slicer weight; the family never does.
  let slot=await f.db.transaction(()=>f.schedule.projectSlot(a,u.admin));assert.equal(slot.measured,null);
  f.advance(130);last={minutes:131,grams:238.4,job:'Cortadores_Papai_noel',state:'finished',finishedAt:new Date(f.now()).toISOString()};
- slot=await f.db.transaction(()=>f.schedule.projectSlot(a,u.admin));assert.deepEqual(slot.measured,{minutes:131,grams:238.4,job:'Cortadores_Papai_noel'});
+ slot=await f.db.transaction(()=>f.schedule.projectSlot(a,u.admin));assert.deepEqual({...slot.measured},{minutes:131,grams:238.4,job:'Cortadores_Papai_noel',failed:false,percent:undefined});
  assert.equal((await f.db.transaction(()=>f.schedule.projectSlot(a,u.ana))).measured,null);
  // 240 g real, booked 200 Azul + 50 Verde: 192 g Azul (150 from the oldest lot, 42 from the next) and 48 g Verde.
  await f.finish(a,131,240);
@@ -216,4 +216,19 @@ test('impressora inicia o pedido sozinha, a tela de conclusão vem preenchida e 
  await f.call(u.admin,`/api/schedule/bookings/${c}/link`,{});assert.equal((await f.project(c)).status,'printing');
  await assert.rejects(f.call(u.admin,`/api/schedule/bookings/${b}/link`,{}),e=>e.status===409);
  await f.finish(c,30,10);assert.ok(f.sent.some(m=>m.to==='team'&&/10 g de PLA \(cor não definida\)/.test(m.text)));
+});
+test('impressão interrompida desconta do estoque o filamento gasto, sem cobrar',async t=>{
+ const f=await fixture(t),{users:u}=f;let last=null;f.schedule.useMeasured(()=>last);
+ await f.db.transaction(async()=>{await f.db.run("INSERT INTO cash_entries(id,scope,kind,category,description,cents,entry_date,created) VALUES(1,'club','expense','filament','Filamento',1000,'2026-10-01','2026-10-01')");await f.db.run("INSERT INTO stock_lots(id,entry_id,material,color,grams) VALUES(1,1,'PLA','Azul',500)");});
+ const {id}=await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:120,filaments:[{material:'PLA',color:'Azul',grams:200}]}));await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
+ f.advance(60);await f.start(id);f.advance(40);
+ // The printer stopped at 25 %: the team is offered a quarter of the slicer weight.
+ last={minutes:40,grams:200,percent:25,job:'Vaso',state:'failed',finishedAt:new Date(f.now()).toISOString()};
+ const slot=await f.db.transaction(()=>f.schedule.projectSlot(id,u.admin));assert.deepEqual(slot.measured,{minutes:40,grams:50,job:'Vaso',failed:true,percent:25});
+ const p=await f.project(id);
+ await f.db.transaction(async()=>{await f.db.run("UPDATE projects SET status='failed',included=0,used=0,charge=0 WHERE id=?",id);await f.schedule.onFailed(p,u.admin,'descolou da mesa',50);});
+ assert.deepEqual((await f.db.all('SELECT lot_id,grams,request_key FROM stock_uses')).map(x=>[x.lot_id,x.grams,/^project:\d+:fail-\d+:0:1$/.test(x.request_key)]),[[1,50,true]]);
+ assert.equal((await f.project(id)).charge,0);assert.equal(await f.db.one('SELECT project_id FROM print_slots WHERE project_id=?',id),undefined);
+ // A second attempt of the same order can fail again and spend more without colliding with the first record.
+ f.advance(1);await f.db.transaction(()=>f.schedule.onFailed(p,u.admin,'de novo',20));assert.equal((await f.db.one('SELECT SUM(grams) n FROM stock_uses')).n,70);
 });

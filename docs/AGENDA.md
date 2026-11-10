@@ -36,6 +36,8 @@ sozinhos o próximo horário livre e seguem os passos 4 e 5.
   para o mais novo, dividido entre os filamentos do agendamento. Cor sem lote, "Quero ajuda" ou
   estoque insuficiente viram aviso para a equipe; quando uma cor cai abaixo do mínimo (Regras da
   agenda, padrão 200 g), a equipe recebe "estoque baixo". Sem nenhum lote cadastrado, nada acontece.
+- **Falha:** a tela "Registrar falha" tem o campo opcional de filamento gasto, já sugerido pela
+  impressora (peso do fatiador × progresso alcançado). Esse peso sai do estoque, sem cobrança.
 
 ## Quem vê o quê
 

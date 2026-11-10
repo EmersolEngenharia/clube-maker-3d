@@ -194,11 +194,11 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const due=Math.max(0,done.charge-got),pay=due>0?`Valor a pagar: ${money(due)}${got?` (já recebemos ${money(got)})`:''}. O link do PIX chega em seguida.`:done.charge>0?'Está tudo pago. Obrigado!':'Não há valor adicional a pagar.';
   await tellFamily(p.family_id,`Olá, {nome}! A peça do pedido ${number(p.id)} "${p.name}" está pronta. 🎉\nRetire na ${cfg.pickupPlace}, de ${cfg.open} às ${cfg.close}.\nConsumo real: ${span(done.actual_minutes)} de impressão e ${done.actual_grams} g de filamento.\n${pay}\nDetalhes: ${link(p.id)}`,u.id);
   if(got>done.charge)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" terminou custando ${money(done.charge)}, mas a família já pagou ${money(got)}. Combine a devolução de ${money(got-done.charge)}.`,u.id);
-  await consumeStock(done,s,u,cfg);
+  await consumeStock(done,s,u,cfg,'done');
  }
  // The filament used leaves the stock lots (oldest first), split across the order's filaments in the booked proportion.
  // Nothing happens while the club keeps no lots; gaps and low colors are reported to the team.
- async function consumeStock(done,s,u,cfg){
+ async function consumeStock(done,s,u,cfg,attempt){
   const actual=Number(done.actual_grams)||0;if(actual<=0)return;
   const lots=await all('SELECT l.id,l.material,l.color,l.grams,COALESCE((SELECT SUM(x.grams) FROM stock_uses x WHERE x.lot_id=l.id),0) used FROM stock_lots l JOIN cash_entries c ON c.id=l.entry_id WHERE c.voided_at IS NULL ORDER BY c.entry_date,l.id');
   if(!lots.length)return;
@@ -211,7 +211,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    const label=`${r.material} ${r.color}`;if(key(r.color)==='quero ajuda'){missing.push(`${need} g de ${r.material} (cor não definida)`);continue;}
    const match=lots.filter(l=>key(l.material)===key(r.material)&&key(l.color)===key(r.color)),before=match.reduce((n,l)=>n+l.grams-Number(l.used),0);let left=need;
    for(const l of match){const free=l.grams-Number(l.used);if(free<=0||!left)continue;const g=Math.min(free,left);
-    await run('INSERT INTO stock_uses(lot_id,grams,reason,created_by,created,request_key) VALUES(?,?,?,?,?,?)',l.id,g,`Pedido ${number(done.id)} "${done.name}"`.slice(0,200),u.id,stamp(),`project:${done.id}:${i}:${l.id}`);l.used=Number(l.used)+g;left-=g;}
+    await run('INSERT INTO stock_uses(lot_id,grams,reason,created_by,created,request_key) VALUES(?,?,?,?,?,?)',l.id,g,`Pedido ${number(done.id)} "${done.name}"`.slice(0,200),u.id,stamp(),`project:${done.id}:${attempt}:${i}:${l.id}`);l.used=Number(l.used)+g;left-=g;}
    if(need>left)taken.push(`${need-left} g de ${label}`);
    if(left>0)missing.push(`${left} g de ${label}${match.length?' (estoque insuficiente)':' (sem lote cadastrado)'}`);
    const after=before-(need-left);if(match.length&&before>=cfg.lowStockGrams&&after<cfg.lowStockGrams)low.push(`${label}: restam ${after} g`);
@@ -227,7 +227,8 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   else await tellTeam(`Clube Maker 3D: a família cancelou o pedido ${number(p.id)} "${p.name}" (${when(s.starts_at)}). O horário voltou a ficar livre.`,u.id);
   if(got>0)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" foi encerrado com ${money(got)} já recebidos. Combine a devolução com a família.`,u.id);
  }
- const onFailed=(p,u,reason)=>release(p,u,`A impressão do pedido ${number(p.id)} "${p.name}" foi interrompida: ${reason}. Não haverá cobrança e as horas voltaram para a cota. A equipe vai preparar uma nova tentativa.`);
+ // A failed print still spent filament: what the team weighed leaves the stock before the slot is released.
+ const onFailed=async(p,u,reason,grams=0)=>{if(grams>0)await consumeStock({...p,actual_grams:grams},await slotOf(p.id),u,await settings(),'fail-'+clock().getTime());return release(p,u,`A impressão do pedido ${number(p.id)} "${p.name}" foi interrompida: ${reason}. Não haverá cobrança e as horas voltaram para a cota. A equipe vai preparar uma nova tentativa.`)};
  const onCancelled=(p,u)=>release(p,u,`O pedido ${number(p.id)} "${p.name}" foi cancelado pela equipe, sem cobrança. As horas reservadas voltaram para a cota.`);
  // ---- views ----
  const detail=(r,u)=>({id:r.project_id,start:r.starts_at,end:r.ends_at,name:r.name,participant:r.participant,...(isTeam(u)?{family:r.family_name}:{}),status:r.status,validated:Boolean(r.validated_at),selfService:Boolean(r.self_service),minutes:r.minutes,grams:r.grams,material:r.material,quantity:r.quantity,filaments:JSON.parse(r.filaments||'[]').map(({rate,...f})=>f),estMinutes:r.est_minutes,estGrams:r.est_grams,included:r.included,charge:r.charge,paid:Boolean(r.paid),chargeError:isTeam(u)?r.charge_error:null,own:r.family_id===u.family_id});
@@ -249,7 +250,8 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  async function own(id,u){const p=await one('SELECT * FROM projects WHERE id=?',id);if(!p||(!isTeam(u)&&p.family_id!==u.family_id))fail('Agendamento não encontrado.',404);const s=await slotOf(id);if(!s)fail('Este pedido não tem horário na agenda.',404);return {p,s};}
  async function projectSlot(id,u){const s=await slotOf(id);if(!s)return null;const status=(await one('SELECT status FROM projects WHERE id=?',id))?.status,job=measured();
   // While the order is printing, the team sees what the printer measured in a job that ended after the order started.
-  const m=isTeam(u)&&status==='printing'&&job?.finishedAt>s.starts_at&&job.state==='finished'?{minutes:job.minutes,grams:job.grams,job:job.job}:null;
+  // After a failure only the part already printed was spent: the slicer weight times the progress reached.
+  const m=isTeam(u)&&status==='printing'&&job?.finishedAt>s.starts_at&&['finished','failed'].includes(job.state)?{minutes:job.minutes,grams:job.state==='failed'?(job.grams!=null&&job.percent!=null?Math.round(job.grams*job.percent/10)/10:null):job.grams,job:job.job,failed:job.state==='failed',percent:job.percent}:null;
   return {start:s.starts_at,end:s.ends_at,validated:Boolean(s.validated_at),selfService:Boolean(s.self_service),filaments:JSON.parse(s.filaments||'[]').map(({rate,...f})=>f),estMinutes:s.est_minutes,estGrams:s.est_grams,chargeError:isTeam(u)?s.charge_error:null,measured:m};}
  // ---- member and team actions ----
  async function book(u,b){

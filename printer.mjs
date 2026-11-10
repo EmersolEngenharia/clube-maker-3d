@@ -25,7 +25,7 @@ export function createPrinter({db,fail,env=process.env,clock=()=>new Date(),onEv
   const ended=previous&&['printing','paused'].includes(previous.state)&&['finished','failed','idle'].includes(next.state);
   if(ended&&previous.startedAt)next.lastMinutes=Math.max(1,Math.round((now.getTime()-Date.parse(previous.startedAt))/60000));
   // What the machine measured in the last job: offered to the team when it registers the real consumption.
-  if(ended&&next.state!=='idle')next.lastJob={minutes:next.lastMinutes,grams:previous.weight??null,job:previous.job??null,state:next.state,finishedAt:now.toISOString()};
+  if(ended&&next.state!=='idle')next.lastJob={minutes:next.lastMinutes,grams:previous.weight??null,percent:previous.percent??null,job:previous.job??null,state:next.state,finishedAt:now.toISOString()};
   const began=previous&&!['printing','paused'].includes(previous.state)&&next.state==='printing';
   if(image&&image.length>3&&image.length<=1500000&&image[0]===0xff&&image[1]===0xd8)snapshot={bytes:image,at:now.getTime()};
   if(!['printing','paused'].includes(next.state))snapshot=null;
