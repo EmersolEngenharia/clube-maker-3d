@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#162846">
+<meta name="description" content="Como mostrar sua criação na vitrine do Clube Maker 3D e enviar fotos e vídeos para o Instagram do clube.">
+<title>Vitrine e Instagram · Clube Maker 3D Emersol</title>
+<style>
+:root{--navy:#162846;--turquoise:#13c4d0;--sun:#ffcf54;--flame:#ff6328;--teal:#087982;--page:#f5f8fc;--paper:#fff;--ink:#162846;--muted:#5b6b82;--border:#e0e7ef;--soft:#e8f6f7;--notice:#fff7e3;--notice-ink:#79561a}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+a{color:var(--teal);font-weight:650;text-underline-offset:3px}
+a:focus-visible{outline:3px solid var(--turquoise);outline-offset:2px;border-radius:4px}
+.wrap{max-width:980px;margin:0 auto;padding:0 20px}
+header.hero{background:var(--navy);color:#fff;padding:40px 0 46px;position:relative;overflow:hidden}
+header.hero:after{content:"";position:absolute;right:-70px;top:-70px;width:230px;height:230px;border:28px solid var(--turquoise);border-radius:50%;opacity:.35}
+.brand{display:flex;align-items:center;gap:12px;font-weight:760;letter-spacing:-.4px}
+.brand svg{width:46px;height:46px;background:#fff;border-radius:14px;padding:3px;flex-shrink:0}
+.brand small{display:block;font-size:10px;letter-spacing:3px;color:#c9d8e9;font-weight:700}
+.eyebrow{font-size:11px;letter-spacing:2.5px;font-weight:760;text-transform:uppercase;color:var(--teal)}
+header .eyebrow{color:var(--sun);margin-top:34px}
+h1{font-size:clamp(30px,6vw,46px);line-height:1.08;letter-spacing:-1.2px;margin:10px 0 12px;max-width:640px}
+header p{color:#d6e2f0;max-width:620px;margin:0;font-size:17px}
+nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+nav.toc a{color:var(--navy);background:var(--sun);text-decoration:none;padding:7px 14px;border-radius:999px;font-size:14px}
+main{padding:10px 0 50px}
+section{margin-top:42px}
+h2{font-size:clamp(23px,4vw,30px);letter-spacing:-.6px;line-height:1.2;margin:6px 0 8px}
+h3{font-size:18px;margin:0 0 4px;line-height:1.3}
+.lead{color:var(--muted);margin:0 0 18px;max-width:720px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
+.card{background:var(--paper);border:1px solid var(--border);border-radius:16px;padding:18px 20px;box-shadow:0 4px 24px #16284608}
+.card p{margin:6px 0 0;color:#33445c}
+.card .link{display:inline-block;margin-top:10px;font-size:15px;word-break:break-word}
+.tag{display:inline-block;font-size:11px;font-weight:760;letter-spacing:1px;text-transform:uppercase;border-radius:999px;padding:3px 10px;margin-bottom:8px;background:var(--soft);color:var(--teal)}
+.tag.sun{background:#fff1c7;color:#7a5600}
+.tag.flame{background:#ffe5da;color:#a63c18}
+.ext{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:700;background:var(--navy);color:#fff;border-radius:8px;padding:2px 9px;font-size:15px;white-space:nowrap}
+.ext-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.group-title{margin:26px 0 10px;font-size:13px;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted);font-weight:760}
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;counter-reset:step;margin:4px 0 18px}
+.flow div{background:var(--paper);border:1px solid var(--border);border-radius:14px;padding:14px 16px 14px 52px;position:relative;font-size:15px}
+.flow div:before{counter-increment:step;content:counter(step);position:absolute;left:14px;top:13px;width:27px;height:27px;border-radius:50%;background:var(--turquoise);color:var(--navy);font-weight:800;display:grid;place-items:center;font-size:14px}
+.flow b{display:block}
+.notice{background:var(--notice);color:var(--notice-ink);border-radius:14px;padding:14px 18px;margin-top:16px;border:1px solid #f4e2b5}
+.notice strong{color:#5e4210}
+.club{background:var(--soft);border:1px solid #bfe9ec;border-radius:16px;padding:18px 20px;margin-top:16px}
+.club h3{color:var(--teal)}
+.club ul{margin:8px 0 0;padding-left:20px}
+.star{color:var(--flame);font-weight:800}
+footer{border-top:1px solid var(--border);padding:22px 0 40px;color:var(--muted);font-size:14px}
+@media (max-width:520px){.wrap{padding:0 16px}header.hero{padding:28px 0 34px}.card{padding:16px}}
+@media print{
+  body{background:#fff;font-size:12.5px}
+  header.hero{background:#fff;color:var(--ink);padding:0 0 10px;border-bottom:3px solid var(--navy)}
+  header.hero:after,nav.toc{display:none}
+  header p{color:#33445c}header .eyebrow{color:var(--teal);margin-top:14px}
+  .brand small{color:var(--muted)}
+  .card,.flow div,.club,.notice{box-shadow:none;break-inside:avoid}
+  section{margin-top:22px}
+  a{color:var(--ink)}
+  a.link:after{content:" — " attr(href);font-weight:400;font-size:11px;color:var(--muted)}
+}
+.steps{counter-reset:s;list-style:none;padding:0;margin:8px 0 0}
+.steps li{position:relative;padding:10px 0 10px 46px;border-bottom:1px dashed var(--border)}
+.steps li:last-child{border-bottom:0}
+.steps li:before{counter-increment:s;content:counter(s);position:absolute;left:0;top:9px;width:30px;height:30px;border-radius:50%;background:var(--navy);color:#fff;font-weight:800;display:grid;place-items:center;font-size:14px}
+.steps b{color:var(--ink)}
+.btnlike{display:inline-block;background:var(--soft);color:var(--teal);border:1px solid #bfe9ec;border-radius:8px;padding:0 7px;font-weight:700;font-size:14px;white-space:nowrap}
+table{width:100%;border-collapse:collapse;background:var(--paper);border:1px solid var(--border);border-radius:14px;overflow:hidden;font-size:15px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+th{background:var(--soft);color:var(--teal);font-size:13px;letter-spacing:.6px;text-transform:uppercase}
+tr:last-child td{border-bottom:0}
+.yes{color:#2b7a3d;font-weight:700}.no{color:#a63c18;font-weight:700}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="brand">
+      <svg viewBox="0 0 256 256" role="img" aria-label="Foguete do Clube Maker 3D Emersol"><g transform="rotate(38 128 128)" stroke="#162846" stroke-width="7" stroke-linejoin="round"><path d="M102 171Q73 178 70 217L104 199M154 171Q183 178 186 217L152 199" fill="#13c4d0"/><path d="M109 215Q95 239 128 250Q160 235 147 215" fill="#ff6328"/><path d="M119 216Q111 231 128 239Q143 230 137 216" fill="#ffcf54" stroke="none"/><path d="M104 178H152V216H104Z" fill="#438fd0"/><path d="M128 14Q72 61 94 179H162Q184 61 128 14Z" fill="#ff6328"/><path d="M128 14Q101 37 94 68H162Q155 37 128 14Z" fill="#13c4d0"/><path d="M94 151H162V179H94Z" fill="#ffcf54"/><circle cx="128" cy="110" r="25" fill="#13c4d0"/><circle cx="128" cy="110" r="14" fill="#162846" stroke="none"/><path d="M128 170V216" stroke="#162846" stroke-width="12" stroke-linecap="round"/></g></svg>
+      <div>Clube Maker 3D Emersol<small>IMAGINE · CRIE · IMPRIMA</small></div>
+    </div>
+    <div class="eyebrow">Guia da vitrine</div>
+    <h1>Sua criação na vitrine e no Instagram do clube.</h1>
+    <p>Como fotografar a peça, colocá-la na vitrine para as outras famílias e enviar fotos e vídeos para a equipe divulgar nas redes sociais, sempre com a autorização do responsável.</p>
+    <nav class="toc" aria-label="Seções do guia">
+      <a href="#caminhos">Vitrine ou Instagram?</a>
+      <a href="#foto">Uma boa foto</a>
+      <a href="#vitrine">Na vitrine</a>
+      <a href="#instagram">No Instagram</a>
+      <a href="#equipe">Para a equipe</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="caminhos" aria-labelledby="t-caminhos">
+  <div class="eyebrow">01 · Dois caminhos</div>
+  <h2 id="t-caminhos">Vitrine do clube ou Instagram?</h2>
+  <p class="lead">São duas coisas diferentes, com autorizações diferentes. Escolha pelo lugar onde você quer que a foto apareça.</p>
+  <div class="grid">
+    <article class="card">
+      <span class="tag">Dentro do portal</span>
+      <h3>Vitrine do clube</h3>
+      <p>Mostra a peça pronta <b>só para as famílias do clube</b>, com a foto, o tempo e o material da impressão. Outras famílias podem pedir uma igual.</p>
+      <p>A equipe leva a peça para a vitrine e o <b>responsável autoriza</b>.</p>
+    </article>
+    <article class="card">
+      <span class="tag flame">Redes sociais</span>
+      <h3>Quero que postem</h3>
+      <p>Para a equipe divulgar no <b>Instagram</b> e em outras redes do clube. A família envia fotos, vídeos e a história da criação.</p>
+      <p>O <b>responsável autoriza a divulgação</b> e a equipe revisa antes de postar.</p>
+    </article>
+  </div>
+  <div class="notice"><strong>A autorização da vitrine não vale para o Instagram.</strong> Para a foto aparecer nas redes sociais do clube, envie também pelo <b>Quero que postem</b>.</div>
+</section>
+
+<section id="foto" aria-labelledby="t-foto">
+  <div class="eyebrow">02 · Fotografia</div>
+  <h2 id="t-foto">Como tirar uma boa foto da sua peça</h2>
+  <p class="lead">Não precisa de equipamento: o celular resolve. O segredo é luz, fundo e foco.</p>
+  <div class="grid">
+    <article class="card"><span class="tag sun">Luz</span><h3>Perto da janela</h3><p>Use luz do dia, de lado. Evite o flash e o sol direto, que criam sombras duras.</p></article>
+    <article class="card"><span class="tag sun">Fundo</span><h3>Liso e limpo</h3><p>Uma mesa de madeira clara, uma folha branca ou um tecido de uma cor só. Tire objetos do fundo.</p></article>
+    <article class="card"><span class="tag sun">Enquadramento</span><h3>A peça inteira</h3><p>Celular na altura da peça, foco tocando na tela. Faça de frente, de lado e um detalhe de perto.</p></article>
+    <article class="card"><span class="tag sun">Vídeo</span><h3>10 a 20 segundos</h3><p>Ótimo para peças articuladas ou que se encaixam. Grave em pé (vertical), mostrando o movimento.</p></article>
+  </div>
+  <div class="club">
+    <h3>Cuidados com quem aparece</h3>
+    <ul>
+      <li><b>Não mostre o rosto das crianças.</b> Mãos segurando a peça podem aparecer.</li>
+      <li>Nada de nome completo, uniforme da escola, endereço ou placa de carro na imagem.</li>
+      <li>Arquivos: fotos JPG, PNG ou WebP; vídeos MP4 ou WebM; até 10 MB cada.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="vitrine" aria-labelledby="t-vitrine">
+  <div class="eyebrow">03 · Para as famílias</div>
+  <h2 id="t-vitrine">Colocar sua peça na vitrine do clube</h2>
+  <p class="lead">A vitrine mostra peças que já saíram da impressora do clube. Quem coloca a peça lá é a equipe, com a sua foto e a sua autorização.</p>
+  <ol class="steps">
+    <li><b>Retire a peça e tire a foto</b> seguindo as dicas acima.</li>
+    <li><b>Envie a foto no pedido.</b> Abra <span class="btnlike">Meus projetos</span>, entre no pedido e, em <span class="btnlike">Conversa com a equipe</span>, anexe a imagem com a mensagem: “Pode colocar na vitrine”.</li>
+    <li><b>A equipe prepara a peça na vitrine</b> com o nome, a coleção e a sua foto.</li>
+    <li><b>O responsável autoriza.</b> No pedido e na <span class="btnlike">Vitrine do clube</span> aparece o aviso. Clique em <span class="btnlike">Autorizar na vitrine</span> e escolha se o primeiro nome do participante aparece (“Feita por Helena”). Depois clique em <span class="btnlike">Autorizar</span>.</li>
+    <li><b>Pronto:</b> a peça aparece para as famílias do clube. Para tirar quando quiser, use <span class="btnlike">Tirar da vitrine</span>.</li>
+  </ol>
+  <div class="notice"><strong>Só o responsável da família autoriza.</strong> O nome da família e o rosto das crianças nunca aparecem na vitrine.</div>
+</section>
+
+<section id="instagram" aria-labelledby="t-instagram">
+  <div class="eyebrow">04 · Para as famílias</div>
+  <h2 id="t-instagram">Enviar fotos e vídeos para o Instagram do clube</h2>
+  <p class="lead">Pelo <b>Quero que postem</b> você conta a história da criação e manda o material. A equipe revisa e publica nas redes do clube.</p>
+  <ol class="steps">
+    <li>No menu, abra <span class="btnlike">Quero que postem</span> e clique em <span class="btnlike">Novo conteúdo</span>.</li>
+    <li>No campo <b>Quero que poste…</b>, conte a história: o que é a peça, para quem foi feita, o que aprendeu.</li>
+    <li>Em <b>Detalhes para divulgar ou vender</b> (opcional), preencha o nome da peça e uma sugestão de legenda, e marque <b>Instagram</b> em <b>Redes de preferência</b>. Se quiser vender a peça, informe o preço sugerido.</li>
+    <li>Clique em <span class="btnlike">Salvar rascunho</span> e depois em <b>Adicionar fotos ou vídeos</b>: até 5 arquivos.</li>
+    <li>Envie: o aprendiz clica em <span class="btnlike">Pedir autorização</span> e o conteúdo vai para o responsável. O responsável clica em <span class="btnlike">Enviar para revisão</span> e confirma a autorização na mesma hora.</li>
+    <li><b>Quando foi o aprendiz que enviou, o responsável autoriza:</b> abre o conteúdo em <span class="btnlike">Quero que postem</span>, confere fotos, vídeos e textos e clica em <span class="btnlike">Conferir e autorizar</span>.</li>
+    <li><b>A equipe revisa:</b> marca como pronto para divulgação ou devolve com uma orientação.</li>
+  </ol>
+  <div class="group-title">O que cada etapa significa</div>
+  <table>
+    <thead><tr><th>Etapa no portal</th><th>O que acontece</th></tr></thead>
+    <tbody>
+      <tr><td>Rascunho</td><td>Você ainda pode editar o texto e trocar fotos e vídeos.</td></tr>
+      <tr><td>Aguardando responsável</td><td>O aprendiz enviou; falta a autorização do responsável.</td></tr>
+      <tr><td>Em revisão pela equipe</td><td>Autorizado; a equipe está conferindo.</td></tr>
+      <tr><td>Pronto para divulgação</td><td>Aprovado. A equipe publica nas redes do clube.</td></tr>
+    </tbody>
+  </table>
+  <div class="notice"><strong>O portal não publica sozinho.</strong> Quem posta é a equipe. Se você editar um conteúdo já enviado, a autorização anterior é removida e ele passa por nova revisão.</div>
+</section>
+
+<section id="equipe" aria-labelledby="t-equipe">
+  <div class="eyebrow">05 · Para a equipe</div>
+  <h2 id="t-equipe">Do pedido à vitrine e ao Instagram</h2>
+  <div class="grid">
+    <article class="card">
+      <span class="tag">Vitrine</span>
+      <h3>Levar uma peça para a vitrine</h3>
+      <p>No pedido concluído, clique em <span class="btnlike">Levar para a vitrine</span>, preencha nome, coleção e comentário e envie a foto que a família mandou na conversa. A peça só aparece depois da autorização do responsável.</p>
+      <p>Para um modelo que a equipe já testou, use <span class="btnlike">Adicionar peça</span> na Vitrine. Em cada peça há <span class="btnlike">Editar</span>, <span class="btnlike">Ocultar</span> e <span class="btnlike">Remover</span>.</p>
+    </article>
+    <article class="card">
+      <span class="tag flame">Instagram</span>
+      <h3>Revisar e postar</h3>
+      <p>Em <span class="btnlike">Divulgação</span>, abra os conteúdos <b>Em revisão pela equipe</b>, confira a autorização, as imagens e a legenda e clique em <span class="btnlike">Aprovar conteúdo</span>, ou use <span class="btnlike">Voltar para rascunho</span> com uma orientação.</p>
+      <p>Abra cada foto ou vídeo do conteúdo aprovado para salvar no celular e postar. Use apenas conteúdos <b>Prontos para divulgação</b>.</p>
+    </article>
+  </div>
+  <div class="club">
+    <h3>Na legenda</h3>
+    <ul>
+      <li>Credite o autor do modelo e o site, por exemplo: “Modelo: Bodoke (MakerWorld)”. Confira se a licença permite o uso.</li>
+      <li>Use só o primeiro nome do participante, e só se o responsável escreveu que pode.</li>
+      <li>Convide para conhecer o clube: <a href="https://maker3d.emersol.ai">maker3d.emersol.ai</a></li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">Clube Maker 3D Emersol · Itumbiara, GO · <a href="https://maker3d.emersol.ai">maker3d.emersol.ai</a> · <a href="/guia-impressao-3d.html">Guia do Maker</a></div>
+</footer>
+</body>
+</html>
