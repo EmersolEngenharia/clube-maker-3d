@@ -48,7 +48,7 @@ for i in {1..20}; do
   sleep 1
 done
 [[ "$healthy" == 1 ]]
-for asset in brand.css brand-icon.svg favicon.svg app.js features.js operations.js billing.js pricing.js; do
+for asset in brand.css brand-icon.svg favicon.svg app.js features.js operations.js billing.js gallery.js schedule.js schedule.css pricing.js; do
   curl -fsS -H "Host: maker3d.emersol.ai" "http://127.0.0.1:$port/$asset" | cmp - "public/$asset"
 done
 docker rm -f "$candidate" >/dev/null
@@ -65,7 +65,7 @@ for i in {1..30}; do
 done
 [[ "$healthy" == 1 ]]
 curl -fsS https://maker3d.emersol.ai/healthz
-for asset in brand.css brand-icon.svg favicon.svg app.js features.js operations.js billing.js pricing.js; do
+for asset in brand.css brand-icon.svg favicon.svg app.js features.js operations.js billing.js gallery.js schedule.js schedule.css pricing.js; do
   curl -fsS "https://maker3d.emersol.ai/$asset" | cmp - "public/$asset"
 done
 printf 'sha=%s\nprevious=%s\nbackup=%s\nchecked_utc=%s\n' "$sha" "$previous" "$backup" "$(date -u +%FT%TZ)" | tee /opt/maker3d/deployment.txt
