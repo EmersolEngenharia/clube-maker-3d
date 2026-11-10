@@ -7,7 +7,7 @@ import {deflateRawSync} from 'node:zlib';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {scheduleDefaults as cfg,fromLocal,isOpen,nextOpen,nextFree,suggestions,reflow,conflict,cleanSettings,createSchedule} from '../schedule.mjs';
+import {scheduleDefaults as cfg,fromLocal,isOpen,nextOpen,nextFree,suggestions,reflow,conflict,cleanSettings,createSchedule,matchJob} from '../schedule.mjs';
 import {analyzePrintFile} from '../slicer.mjs';
 import {createPrinter} from '../printer.mjs';
 import {mqtt,parsePackets,mergeReport,toStatus,startBridge} from '../scripts/printer-bridge.mjs';
@@ -174,4 +174,46 @@ test('modo pré-pago: PIX na validação, troca ao editar e diferença ao conclu
  await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_3',externalReference:c.id,amountCents:540,paidDate:'2026-11-09'});
  p=await f.project(id);assert.equal(p.paid,1);assert.deepEqual((await f.db.all("SELECT cents FROM cash_entries WHERE category='printing' ORDER BY id")).map(e=>e.cents),[600,540]);
  await f.schedule.tick();assert.equal(f.charges(),3);
+});
+
+test('arquivo que a impressora começou é ligado ao pedido certo, ou a equipe escolhe',()=>{
+ const now=at('2026-11-10',9),o=(id,name,h)=>({id,name,starts_at:at('2026-11-10',h).toISOString()});
+ const orders=[o(1,'Cortadores de biscoito Papai Noel',14),o(2,'Vaso geométrico',9),o(3,'Chaveiro foguete',16)];
+ assert.equal(matchJob('Cortadores_Papai_noel.gcode.3mf',orders,[],now).id,1);
+ assert.equal(matchJob('plate_1.gcode',orders,[{project_id:3,name:'foguete-v2.3mf'}],now)?.id,2);
+ assert.equal(matchJob('foguete-v2',orders,[{project_id:3,name:'foguete-v2.3mf'}],now).id,3);
+ assert.equal(matchJob('',[o(1,'A',9),o(2,'B',9,30)],[],now),null);
+ assert.equal(matchJob('teste da impressora',orders,[],at('2026-11-10',20)),null);
+});
+test('impressora inicia o pedido sozinha, a tela de conclusão vem preenchida e o filamento sai do estoque',async t=>{
+ const f=await fixture(t),{users:u}=f;let last=null;f.schedule.useMeasured(()=>last);
+ // Stock: 300 g of PLA Azul in two lots (oldest first) and 1000 g of PLA Verde.
+ await f.db.transaction(async()=>{for(const [i,color,grams,day] of [[1,'Azul',150,'2026-10-01'],[2,'azul',150,'2026-10-05'],[3,'Verde',1000,'2026-10-02']]){await f.db.run("INSERT INTO cash_entries(id,scope,kind,category,description,cents,entry_date,created) VALUES(?,'club','expense','filament','Filamento',?,?,?)",i,grams*10,day,day);await f.db.run('INSERT INTO stock_lots(id,entry_id,material,color,grams) VALUES(?,?,?,?,?)',i,i,'PLA',color,grams);}});
+ const a=(await f.call(u.ana,'/api/schedule/bookings',f.booking({name:'Cortadores Papai Noel',startsAt:at('2026-11-09',11).toISOString(),minutes:120,filaments:[{material:'PLA',color:'Azul',grams:200},{material:'PLA',color:'Verde',grams:50}]}))).id;
+ const b=(await f.call(u.bia,'/api/schedule/bookings',f.booking({name:'Dragão',startsAt:at('2026-11-09',14).toISOString(),minutes:60,participant:'Bia'}))).id;
+ // Not validated yet: the printer start finds no order and does nothing.
+ await f.schedule.onPrinter('started',{job:'Cortadores_Papai_noel'});assert.equal((await f.project(a)).status,'queued');
+ for(const id of [a,b])await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
+ f.advance(60);await f.schedule.onPrinter('started',{job:'Cortadores_Papai_noel.gcode.3mf'});
+ assert.equal((await f.project(a)).status,'printing');assert.ok(f.sent.some(m=>m.to==='team'&&/Liguei ao pedido #001/.test(m.text)));assert.ok(f.sent.some(m=>m.to==='family:1'&&/começou agora/.test(m.text)));
+ // Already printing: a second start report changes nothing.
+ await f.schedule.onPrinter('started',{job:'Dragão'});assert.equal((await f.project(b)).status,'queued');
+ // The printer finished: the team sees the measured time and the slicer weight; the family never does.
+ let slot=await f.db.transaction(()=>f.schedule.projectSlot(a,u.admin));assert.equal(slot.measured,null);
+ f.advance(130);last={minutes:131,grams:238.4,job:'Cortadores_Papai_noel',state:'finished',finishedAt:new Date(f.now()).toISOString()};
+ slot=await f.db.transaction(()=>f.schedule.projectSlot(a,u.admin));assert.deepEqual(slot.measured,{minutes:131,grams:238.4,job:'Cortadores_Papai_noel'});
+ assert.equal((await f.db.transaction(()=>f.schedule.projectSlot(a,u.ana))).measured,null);
+ // 240 g real, booked 200 Azul + 50 Verde: 192 g Azul (150 from the oldest lot, 42 from the next) and 48 g Verde.
+ await f.finish(a,131,240);
+ const uses=await f.db.all('SELECT lot_id,grams FROM stock_uses ORDER BY id');assert.deepEqual(uses.map(x=>[x.lot_id,x.grams]),[[1,150],[2,42],[3,48]]);
+ assert.match((await f.db.all('SELECT text FROM events WHERE project_id=? ORDER BY id',a)).at(-1).text,/Baixa automática no estoque: 192 g de PLA Azul, 48 g de PLA Verde/);
+ assert.ok(f.sent.some(m=>m.to==='team'&&/estoque de filamento baixo\. PLA Azul: restam 108 g/.test(m.text)));
+ // A color with no lot is reported, and the team picks the order when the printer start is not clear.
+ // Two validated orders close to now and a file name that matches neither: the team decides.
+ const c=(await f.call(u.ana,'/api/schedule/bookings',f.booking({name:'Peça teste',startsAt:at('2026-11-09',15,30).toISOString(),minutes:30,filaments:[{material:'PLA',color:'Quero ajuda',grams:10}]}))).id;await f.call(u.admin,`/api/schedule/bookings/${c}/validate`,{});
+ const before=f.sent.length;await f.schedule.onPrinter('started',{job:'calibracao'});assert.equal((await f.project(b)).status,'queued');assert.ok(f.sent.slice(before).some(m=>m.to==='team'&&/não sei de qual pedido/.test(m.text)));
+ await assert.rejects(f.call(u.bia,`/api/schedule/bookings/${b}/link`,{}),e=>e.status===403);
+ await f.call(u.admin,`/api/schedule/bookings/${c}/link`,{});assert.equal((await f.project(c)).status,'printing');
+ await assert.rejects(f.call(u.admin,`/api/schedule/bookings/${b}/link`,{}),e=>e.status===409);
+ await f.finish(c,30,10);assert.ok(f.sent.some(m=>m.to==='team'&&/10 g de PLA \(cor não definida\)/.test(m.text)));
 });

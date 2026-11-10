@@ -19,7 +19,8 @@ test('mapeamento de entidades e valores da integração Bambu Lab',()=>{
  const list=printers(registryRows,deviceRows);assert.equal(list.length,1);assert.deepEqual(list[0],{deviceId:'d1',name:'Impressora do clube',model:'X2D',entities:{status:'sensor.x2d_status_da_impressao',progress:'sensor.x2d_progresso',remaining:'sensor.x2d_tempo_restante',layer:'sensor.x2d_camada',layers:'sensor.x2d_camadas',nozzle:'sensor.x2d_bico_direito',bed:'sensor.x2d_mesa',job:'sensor.x2d_tarefa',camera:'camera.x2d_camera'}});
  assert.match(template(list[0].entities),/"remaining_unit": state_attr\("sensor.x2d_tempo_restante", "unit_of_measurement"\)/);
  assert.equal(toMinutes('1.5','h'),90);assert.equal(toMinutes('unavailable','min'),null);
- assert.deepEqual(toStatus({status:'running',progress:'42',remaining:'2.25',remaining_unit:'h',layer:'10',layers:'200',nozzle:'428',nozzle_unit:'°F',bed:'60',job:'vaso'}),{state:'printing',percent:42,remainingMinutes:135,layer:10,totalLayers:200,nozzle:220,bed:60,job:'vaso'});
+ assert.deepEqual(toStatus({status:'running',progress:'42',remaining:'2.25',remaining_unit:'h',layer:'10',layers:'200',nozzle:'428',nozzle_unit:'°F',bed:'60',job:'vaso'}),{state:'printing',percent:42,remainingMinutes:135,layer:10,totalLayers:200,nozzle:220,bed:60,job:'vaso',weight:null});
+ assert.equal(toStatus({status:'running',weight:'0.25',weight_unit:'kg'}).weight,250);assert.equal(toStatus({status:'running',weight:'84.3',weight_unit:'g'}).weight,84.3);
  assert.equal(toStatus({status:'offline'}),null);assert.equal(toStatus({status:'pause'}).state,'paused');assert.equal(toStatus({status:'FINISH',job:'unknown'}).job,undefined);
 });
 // A tiny Home Assistant: REST template + camera, and the WebSocket registry with real framing.

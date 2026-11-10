@@ -7,7 +7,7 @@ import {whatsappNumber} from './messaging/evolution.mjs';
 // Printer calendar. Every approved order holds one time slot; members book their own slot and the team validates it.
 // Times are stored in UTC. The club works in America/Sao_Paulo, which has had a fixed -03:00 offset since 2019.
 const OFFSET=-180,MIN=60000;
-export const scheduleDefaults={open:'08:00',close:'18:00',days:[1,2,3,4,5],buffer:15,lead:60,horizon:30,maxMinutes:2880,maxActive:3,chargeWhen:'finish',teamWhatsapp:[],pickupDays:3,pickupPlace:'Emersol, em Itumbiara'};
+export const scheduleDefaults={open:'08:00',close:'18:00',days:[1,2,3,4,5],buffer:15,lead:60,horizon:30,maxMinutes:2880,maxActive:3,lowStockGrams:200,chargeWhen:'finish',teamWhatsapp:[],pickupDays:3,pickupPlace:'Emersol, em Itumbiara'};
 const hm=s=>{const [h,m]=s.split(':').map(Number);return h*60+m;};
 const local=d=>new Date(new Date(d).getTime()+OFFSET*MIN);
 export const fromLocal=(day,minutes=0)=>new Date(Date.parse(day+'T00:00:00Z')+(minutes-OFFSET)*MIN);
@@ -46,6 +46,19 @@ export function reflow(cfg,fixed,queued){
  }
  return moved;
 }
+// Matches the file the printer started to a validated order: by name first (the order's name or its files),
+// then by time (a single order whose slot is near now). Returns null when it is not clear.
+const words=v=>new Set(String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\.(gcode|3mf|stl)\b/g,' ').replace(/[^a-z0-9]+/g,' ').split(' ').filter(w=>w.length>=3&&!['plate','placa','gcode','para','com','the'].includes(w)));
+export function matchJob(job,orders,files=[],now=new Date()){
+ const target=words(job);
+ if(target.size){
+  const score=o=>Math.max(0,...[o.name,...files.filter(f=>f.project_id===o.id).map(f=>f.name)].map(n=>{const w=words(n);if(!w.size)return 0;let hit=0;for(const x of w)if(target.has(x))hit++;return hit/Math.min(w.size,target.size);}));
+  const ranked=orders.map(o=>({o,v:score(o)})).sort((a,b)=>b.v-a.v);
+  if(ranked[0]?.v>=0.6&&(ranked.length===1||ranked[1].v<ranked[0].v))return ranked[0].o;
+ }
+ const t=new Date(now).getTime(),near=orders.filter(o=>{const s=Date.parse(o.starts_at);return s-3*3600000<=t&&t<=s+60*60000;});
+ return near.length===1?near[0]:null;
+}
 export function cleanSettings(b,fail){
  const time=(v,label)=>{if(typeof v!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(v))fail(`${label}: use o formato HH:MM.`);return v;},int=(v,label,min,max)=>{if(!Number.isInteger(v)||v<min||v>max)fail(`${label}: valor inválido.`);return v;};
  const open=time(b.open,'Abertura'),close=time(b.close,'Fechamento');if(hm(close)<=hm(open))fail('O fechamento deve ser depois da abertura.');
@@ -54,7 +67,7 @@ export function cleanSettings(b,fail){
  const numbers=(Array.isArray(b.teamWhatsapp)?b.teamWhatsapp:[]).map(n=>{const v=whatsappNumber(n);if(!v)fail('WhatsApp da equipe inválido: use celular com DDD.');return v;});
  if(numbers.length>5)fail('Informe até cinco números da equipe.');
  const place=typeof b.pickupPlace==='string'&&b.pickupPlace.trim()?b.pickupPlace.trim().slice(0,120):scheduleDefaults.pickupPlace;
- return {open,close,days:[...new Set(b.days)].sort(),buffer:int(b.buffer,'Intervalo entre impressões',0,240),lead:int(b.lead,'Antecedência mínima',0,10080),horizon:int(b.horizon,'Dias de agenda aberta',1,180),maxMinutes:int(b.maxMinutes,'Duração máxima',10,10000),maxActive:int(b.maxActive,'Agendamentos por família',1,20),chargeWhen:b.chargeWhen,teamWhatsapp:[...new Set(numbers)],pickupDays:int(b.pickupDays,'Lembrete de retirada',1,30),pickupPlace:place};
+ return {open,close,days:[...new Set(b.days)].sort(),buffer:int(b.buffer,'Intervalo entre impressões',0,240),lead:int(b.lead,'Antecedência mínima',0,10080),horizon:int(b.horizon,'Dias de agenda aberta',1,180),maxMinutes:int(b.maxMinutes,'Duração máxima',10,10000),maxActive:int(b.maxActive,'Agendamentos por família',1,20),chargeWhen:b.chargeWhen,teamWhatsapp:[...new Set(numbers)],pickupDays:int(b.pickupDays,'Lembrete de retirada',1,30),lowStockGrams:int(b.lowStockGrams??scheduleDefaults.lowStockGrams,'Aviso de estoque baixo',0,100000),pickupPlace:place};
 }
 const money=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n/100);
 const when=d=>{const p=Object.fromEntries(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',weekday:'long',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(d)).map(x=>[x.type,x.value]));return `${p.weekday}, ${p.day}/${p.month} às ${p.hour}:${p.minute}`;};
@@ -64,7 +77,7 @@ const number=id=>'#'+String(id).padStart(3,'0');
 export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,integer,body,json,event,env=process.env,clock=()=>new Date()}){
  const one=(q,...a)=>db.one(q,...a),all=(q,...a)=>db.all(q,...a),run=(q,...a)=>db.run(q,...a);
  const stamp=()=>clock().toISOString(),origin=env.PUBLIC_ORIGIN||'https://maker3d.emersol.ai';
- let running=false;
+ let running=false,measured=()=>null;
  const guardianLike=u=>u.role==='guardian'||(u.role==='admin'&&Boolean(u.family_id));
  async function settings(){const row=await one('SELECT value FROM schedule_settings WHERE id=1');let saved={};try{saved=row?JSON.parse(row.value):{};}catch{}const {homeassistant,...rest}=saved;return {...scheduleDefaults,...rest};}
  const slotOf=id=>one('SELECT * FROM print_slots WHERE project_id=?',id);
@@ -181,6 +194,31 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const due=Math.max(0,done.charge-got),pay=due>0?`Valor a pagar: ${money(due)}${got?` (já recebemos ${money(got)})`:''}. O link do PIX chega em seguida.`:done.charge>0?'Está tudo pago. Obrigado!':'Não há valor adicional a pagar.';
   await tellFamily(p.family_id,`Olá, {nome}! A peça do pedido ${number(p.id)} "${p.name}" está pronta. 🎉\nRetire na ${cfg.pickupPlace}, de ${cfg.open} às ${cfg.close}.\nConsumo real: ${span(done.actual_minutes)} de impressão e ${done.actual_grams} g de filamento.\n${pay}\nDetalhes: ${link(p.id)}`,u.id);
   if(got>done.charge)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" terminou custando ${money(done.charge)}, mas a família já pagou ${money(got)}. Combine a devolução de ${money(got-done.charge)}.`,u.id);
+  await consumeStock(done,s,u,cfg);
+ }
+ // The filament used leaves the stock lots (oldest first), split across the order's filaments in the booked proportion.
+ // Nothing happens while the club keeps no lots; gaps and low colors are reported to the team.
+ async function consumeStock(done,s,u,cfg){
+  const actual=Number(done.actual_grams)||0;if(actual<=0)return;
+  const lots=await all('SELECT l.id,l.material,l.color,l.grams,COALESCE((SELECT SUM(x.grams) FROM stock_uses x WHERE x.lot_id=l.id),0) used FROM stock_lots l JOIN cash_entries c ON c.id=l.entry_id WHERE c.voided_at IS NULL ORDER BY c.entry_date,l.id');
+  if(!lots.length)return;
+  let rows=[];try{rows=JSON.parse(s?.filaments||'[]').filter(r=>Number(r.grams)>0);}catch{}
+  if(!rows.length)rows=[{material:done.material,color:done.color,grams:actual}];
+  const key=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim(),planned=rows.reduce((n,r)=>n+Number(r.grams),0);
+  const taken=[],missing=[],low=[];let given=0;
+  for(const [i,r] of rows.entries()){
+   const need=i===rows.length-1?Math.round(actual)-given:Math.round(actual*Number(r.grams)/planned);given+=need;if(need<=0)continue;
+   const label=`${r.material} ${r.color}`;if(key(r.color)==='quero ajuda'){missing.push(`${need} g de ${r.material} (cor não definida)`);continue;}
+   const match=lots.filter(l=>key(l.material)===key(r.material)&&key(l.color)===key(r.color)),before=match.reduce((n,l)=>n+l.grams-Number(l.used),0);let left=need;
+   for(const l of match){const free=l.grams-Number(l.used);if(free<=0||!left)continue;const g=Math.min(free,left);
+    await run('INSERT INTO stock_uses(lot_id,grams,reason,created_by,created,request_key) VALUES(?,?,?,?,?,?)',l.id,g,`Pedido ${number(done.id)} "${done.name}"`.slice(0,200),u.id,stamp(),`project:${done.id}:${i}:${l.id}`);l.used=Number(l.used)+g;left-=g;}
+   if(need>left)taken.push(`${need-left} g de ${label}`);
+   if(left>0)missing.push(`${left} g de ${label}${match.length?' (estoque insuficiente)':' (sem lote cadastrado)'}`);
+   const after=before-(need-left);if(match.length&&before>=cfg.lowStockGrams&&after<cfg.lowStockGrams)low.push(`${label}: restam ${after} g`);
+  }
+  if(taken.length)await event(done.id,`Baixa automática no estoque: ${taken.join(', ')}.`);
+  if(missing.length)await tellTeam(`Clube Maker 3D: não consegui dar baixa no estoque de ${missing.join('; ')} do pedido ${number(done.id)} "${done.name}". Registre em Estoque.`,u.id);
+  if(low.length)await tellTeam(`Clube Maker 3D: estoque de filamento baixo. ${low.join('; ')}. Hora de comprar mais.`,u.id);
  }
  async function release(p,u,text){
   const s=await slotOf(p.id);if(!s)return;const got=await received(p.id);
@@ -209,7 +247,10 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   return {now:stamp(),from:from.toISOString(),days,settings:isAdmin(u)?cfg:shared,slots,bookings:d.open.map(r=>detail(r,u)),blocks:d.blocks.map(b=>({...(team?{id:b.id}:{}),start:b.starts_at,end:b.ends_at,reason:b.reason})),canBook:Boolean(u.family_id)&&['guardian','learner','admin'].includes(u.role),canManage:canOperate(u),canConfigure:isAdmin(u)};
  }
  async function own(id,u){const p=await one('SELECT * FROM projects WHERE id=?',id);if(!p||(!isTeam(u)&&p.family_id!==u.family_id))fail('Agendamento não encontrado.',404);const s=await slotOf(id);if(!s)fail('Este pedido não tem horário na agenda.',404);return {p,s};}
- async function projectSlot(id,u){const s=await slotOf(id);if(!s)return null;return {start:s.starts_at,end:s.ends_at,validated:Boolean(s.validated_at),selfService:Boolean(s.self_service),filaments:JSON.parse(s.filaments||'[]').map(({rate,...f})=>f),estMinutes:s.est_minutes,estGrams:s.est_grams,chargeError:isTeam(u)?s.charge_error:null};}
+ async function projectSlot(id,u){const s=await slotOf(id);if(!s)return null;const status=(await one('SELECT status FROM projects WHERE id=?',id))?.status,job=measured();
+  // While the order is printing, the team sees what the printer measured in a job that ended after the order started.
+  const m=isTeam(u)&&status==='printing'&&job?.finishedAt>s.starts_at&&job.state==='finished'?{minutes:job.minutes,grams:job.grams,job:job.job}:null;
+  return {start:s.starts_at,end:s.ends_at,validated:Boolean(s.validated_at),selfService:Boolean(s.self_service),filaments:JSON.parse(s.filaments||'[]').map(({rate,...f})=>f),estMinutes:s.est_minutes,estGrams:s.est_grams,chargeError:isTeam(u)?s.charge_error:null,measured:m};}
  // ---- member and team actions ----
  async function book(u,b){
   if(!u.family_id||!['guardian','learner','admin'].includes(u.role))fail('Agendamentos são feitos pela conta da família.',403);
@@ -261,6 +302,13 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   await tellFamily(p.family_id,`Olá, {nome}! O agendamento ${number(id)} "${p.name}" foi confirmado pela equipe. ✅\nQuando: ${when(s.starts_at)} (${span(p.minutes)}).\n${costLine(p)}\nA gente avisa quando começar e quando a peça estiver pronta. Detalhes: ${link(id)}`,u.id);
   return {ok:true};
  }
+ // The printer already started this order (the team says which one): it becomes the print in progress, whatever its place.
+ async function link_(u,id){
+  if(!canOperate(u))fail('Acesso operacional necessário.',403);const {p,s}=await own(id,u);
+  if(p.status!=='queued'||!s.validated_at)fail('Escolha um agendamento validado que ainda não começou.');if(await one("SELECT id FROM projects WHERE status='printing'"))fail('Já existe um pedido em impressão.',409);
+  await startNow(p,u,'Impressão ligada pela equipe ao trabalho que a impressora começou.');return {ok:true};
+ }
+ async function startNow(p,u,text){await run("UPDATE projects SET status='printing',updated=? WHERE id=?",stamp(),p.id);await event(p.id,text);await onStarted(p,u);}
  async function retryCharge(u,id){if(!canOperate(u)&&!isAdmin(u))fail('Acesso operacional necessário.',403);const {p}=await own(id,u),got=await received(id);if(p.paid||p.charge<=got)fail('Este pedido não tem valor em aberto.');await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',got,stamp(),id);return {ok:true};}
  async function route(req,res,path,method,u){
   if(!path.startsWith('/api/schedule'))return false;
@@ -279,8 +327,8 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    json(res,info.sliced?{...info,filaments:info.filaments.map(f=>({...f,material:(materials.find(m=>m.name.toLowerCase()===f.type.toLowerCase())||materials.find(m=>f.type&&(f.type.toLowerCase().startsWith(m.name.toLowerCase())||m.name.toLowerCase().startsWith(f.type.toLowerCase()))))?.name||null}))}:info);return true;
   }
   if(path==='/api/schedule/bookings'){json(res,await book(u,b));return true;}
-  const action=path.match(/^\/api\/schedule\/bookings\/(\d+)\/(update|validate|charge)$/);
-  if(action){const id=Number(action[1]);json(res,action[2]==='update'?await update(u,id,b):action[2]==='validate'?await validate(u,id):await retryCharge(u,id));return true;}
+  const action=path.match(/^\/api\/schedule\/bookings\/(\d+)\/(update|validate|charge|link)$/);
+  if(action){const id=Number(action[1]);json(res,action[2]==='update'?await update(u,id,b):action[2]==='validate'?await validate(u,id):action[2]==='link'?await link_(u,id):await retryCharge(u,id));return true;}
   if(path==='/api/schedule/blocks'){
    if(!canOperate(u))fail('Acesso operacional necessário.',403);const start=parseStart(b.startsAt),end=parseStart(b.endsAt);
    if(end<=start||end.getTime()-start.getTime()>60*1440*MIN)fail('Informe um período válido de até 60 dias.');if(end.getTime()<clock().getTime())fail('O bloqueio precisa terminar no futuro.');
@@ -354,11 +402,20 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  async function onPrinter(kind,info={}){
   const p=await db.withRequest(()=>one("SELECT id,name,family_id FROM projects WHERE status='printing'"));
   await db.transaction(async()=>{
+   if(kind==='started'){
+    if(p)return;
+    const orders=await all("SELECT p.*,s.starts_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.status='queued' AND s.validated_at IS NOT NULL ORDER BY s.starts_at,p.id");
+    const files=orders.length?await all(`SELECT project_id,name FROM files WHERE project_id IN (${orders.map(()=>'?').join(',')})`,...orders.map(o=>o.id)):[];
+    const pick=matchJob(info.job,orders,files,clock()),by=await author(),file=info.job?` "${info.job}"`:'';
+    if(pick){await startNow(pick,{id:by},`Impressão iniciada: a impressora começou${file} e o portal ligou a este pedido sozinho.`);await tellTeam(`Clube Maker 3D: a impressora começou${file}. Liguei ao pedido ${number(pick.id)} "${pick.name}". Se não for este, registre a falha no pedido e escolha o certo na Agenda: ${link(pick.id)}`,by);}
+    else if(orders.length)await tellTeam(`Clube Maker 3D: a impressora começou${file}, mas não sei de qual pedido é. Se for de uma família, escolha o pedido na Agenda: ${origin}/?agenda=1`,by);
+    return;
+   }
    if(kind==='finished'){
     await tellTeam(`Clube Maker 3D: a impressora terminou${p?` o pedido ${number(p.id)} "${p.name}"`:' um trabalho'}${info.minutes?` em ${span(info.minutes)}`:''}. ${p?`Registre o consumo real para avisar a família e gerar a cobrança: ${link(p.id)}`:'Não há pedido em impressão no portal.'}`);
     if(p){await event(p.id,`A impressora avisou que terminou${info.minutes?` (${span(info.minutes)} medidos)`:''}. Aguardando a conferência da equipe.`);await tellFamily(p.family_id,`Olá, {nome}! A impressora terminou a peça do pedido ${number(p.id)} "${p.name}". A equipe vai conferir e avisa quando estiver liberada para retirada.`);}
    }else if(kind==='failed')await tellTeam(`Clube Maker 3D: a impressora parou com erro${p?` durante o pedido ${number(p.id)} "${p.name}"`:''}. Confira a máquina${p?` e registre no portal: ${link(p.id)}`:'.'}`);
   });
  }
- return {route,settings,backfill,ensureSlot,onApproved,beforeStart,onStarted,settle,onFinished,onFailed,onCancelled,projectSlot,tick,onPaid,onManualPaid,onPrinter,printingFamily:async()=>(await one("SELECT family_id FROM projects WHERE status='printing'"))?.family_id??null};
+ return {route,settings,backfill,ensureSlot,onApproved,beforeStart,onStarted,settle,onFinished,onFailed,onCancelled,projectSlot,tick,onPaid,onManualPaid,onPrinter,useMeasured:fn=>{measured=fn;},printingFamily:async()=>(await one("SELECT family_id FROM projects WHERE status='printing'"))?.family_id??null};
 }

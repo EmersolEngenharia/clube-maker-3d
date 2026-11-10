@@ -100,7 +100,8 @@ test('caixa, estoque, benefícios, convites e permissões de cada função',asyn
  await t.test('baixas não duplicam despesas nem deixam estoque negativo',async()=>{
   const use={lotId:purchase.id,grams:250,reason:'Projeto e suportes',requestKey:randomUUID()};await op('/stock/use',use);await op('/stock/use',use);
   await op('/stock/use',{...use,grams:1000,requestKey:randomUUID()},400);
-  const stock=await fin('/stock');assert.equal(stock.totals.grams,750);assert.equal(stock.totals.value,7500);
+  // The 100 g of the PLA Azul order finished earlier already left this lot automatically.
+  const stock=await fin('/stock');assert.equal(stock.totals.grams,650);assert.equal(stock.totals.value,6500);assert.ok(stock.uses.some(x=>x.grams===100&&/^Pedido #/.test(x.reason)));
   assert.equal((await admin('/finance'+range)).totals.expenses,10000);
   assert.equal((await op('/stock')).lots[0].cents,undefined);
   await fin(`/finance/entries/${purchase.entryId}/void`,{reason:'Já utilizado'},400);

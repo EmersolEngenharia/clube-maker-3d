@@ -317,6 +317,7 @@ const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('
 const schedule=createSchedule({db,quota,billing,broadcasts,config,fail,str,num,integer,body,json,event});
 await db.transaction(()=>schedule.backfill());
 const printer=createPrinter({db,fail,onEvent:(kind,info)=>schedule.onPrinter(kind,info),printingFamily:()=>schedule.printingFamily(),otherSource:()=>homeAssistant.active(),liveFrame:{available:()=>homeAssistant.frame.available(),get:()=>homeAssistant.frame.get()}});
+schedule.useMeasured(()=>printer.lastJob());
 const homeAssistant=createHomeAssistant({db,fail,ingest:(status,image)=>printer.ingest(status,image)});
 await homeAssistant.load();
 const haTimer=setInterval(()=>{void homeAssistant.tick();},15000);haTimer.unref();

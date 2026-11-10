@@ -23,6 +23,20 @@ equipe valida, e cobrança, baixa e avisos seguem sem trabalho manual.
 Pedidos do fluxo antigo (orçamento da equipe aprovado pelo responsável) recebem
 sozinhos o próximo horário livre e seguem os passos 4 e 5.
 
+## Início, conclusão e estoque automáticos (desde 10/11/2026)
+
+- **Início:** quando a impressora começa um trabalho, o portal liga ao pedido validado pelo nome
+  do arquivo (nome do pedido ou dos arquivos enviados) ou, sem nome claro, ao único pedido com
+  horário próximo. A família recebe o aviso de início e a equipe é avisada de qual pedido foi ligado.
+  Se houver dúvida, a Agenda mostra à equipe "A impressora começou …, sem pedido ligado" com os
+  pedidos possíveis; impressões do clube podem ser ignoradas.
+- **Conclusão:** a tela "Concluir impressão" já vem com o tempo medido pela impressora e o peso do
+  fatiador (sensor *print_weight* do HA). A equipe confere e confirma.
+- **Estoque:** ao concluir, o filamento real sai dos lotes do mesmo material e cor, do mais antigo
+  para o mais novo, dividido entre os filamentos do agendamento. Cor sem lote, "Quero ajuda" ou
+  estoque insuficiente viram aviso para a equipe; quando uma cor cai abaixo do mínimo (Regras da
+  agenda, padrão 200 g), a equipe recebe "estoque baixo". Sem nenhum lote cadastrado, nada acontece.
+
 ## Quem vê o quê
 
 - Todos veem horários livres, ocupados e bloqueios.

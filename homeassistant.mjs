@@ -3,7 +3,7 @@ import {createHash,createCipheriv,createDecipheriv,randomBytes} from 'node:crypt
 // network; the portal server reaches Home Assistant over Tailscale and reads its sensors and camera. Read only.
 const stateMap={running:'printing',prepare:'printing',slicing:'printing',init:'printing',pause:'paused',finish:'finished',failed:'failed',idle:'idle'};
 // translation_key of each ha-bambulab entity, in order of preference (dual-nozzle printers have left/right sensors).
-const wanted={status:['print_status'],progress:['print_progress'],remaining:['remaining_time'],layer:['current_layer'],layers:['total_layers'],nozzle:['nozzle_temp','right_nozzle_temp','left_nozzle_temp'],bed:['bed_temp'],job:['subtask_name','gcode_file'],camera:['camera','p1p_camera']};
+const wanted={status:['print_status'],progress:['print_progress'],remaining:['remaining_time'],layer:['current_layer'],layers:['total_layers'],nozzle:['nozzle_temp','right_nozzle_temp','left_nozzle_temp'],bed:['bed_temp'],job:['subtask_name','gcode_file'],weight:['print_weight'],camera:['camera','p1p_camera']};
 const DISCOVERY_MS=6*3600000,CAMERA_MS=10000;
 export function cleanURL(value){
  let u;try{u=new URL(String(value||'').trim());}catch{return null;}
@@ -30,11 +30,11 @@ const celsius=(value,unit)=>{const n=number(value);return n===null?null:unit==='
 export function toStatus(v){
  const state=stateMap[String(v.status??'').toLowerCase()];if(!state)return null;
  const job=typeof v.job==='string'&&!['unknown','unavailable','none',''].includes(v.job.toLowerCase())?v.job:undefined;
- return {state,percent:number(v.progress),remainingMinutes:toMinutes(v.remaining,v.remaining_unit),layer:number(v.layer),totalLayers:number(v.layers),nozzle:celsius(v.nozzle,v.nozzle_unit),bed:celsius(v.bed,v.bed_unit),job};
+ return {state,percent:number(v.progress),remainingMinutes:toMinutes(v.remaining,v.remaining_unit),layer:number(v.layer),totalLayers:number(v.layers),nozzle:celsius(v.nozzle,v.nozzle_unit),bed:celsius(v.bed,v.bed_unit),job,weight:number(v.weight)===null?null:v.weight_unit==='kg'?number(v.weight)*1000:number(v.weight)};
 }
 export function template(entities){
  const parts=[];
- for(const k of ['status','progress','remaining','layer','layers','nozzle','bed','job']){const id=entities[k];if(!id)continue;parts.push(`"${k}": states(${JSON.stringify(id)})`);if(['remaining','nozzle','bed'].includes(k))parts.push(`"${k}_unit": state_attr(${JSON.stringify(id)}, "unit_of_measurement")`);}
+ for(const k of ['status','progress','remaining','layer','layers','nozzle','bed','job','weight']){const id=entities[k];if(!id)continue;parts.push(`"${k}": states(${JSON.stringify(id)})`);if(['remaining','nozzle','bed','weight'].includes(k))parts.push(`"${k}_unit": state_attr(${JSON.stringify(id)}, "unit_of_measurement")`);}
  return `{{ {${parts.join(', ')}} | tojson }}`;
 }
 // Home Assistant's registry is only exposed on its WebSocket API.

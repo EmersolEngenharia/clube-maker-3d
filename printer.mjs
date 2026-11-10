@@ -21,14 +21,18 @@ export function createPrinter({db,fail,env=process.env,clock=()=>new Date(),onEv
   if(!b||typeof b!=='object'||!states.includes(b.state))fail('Estado da impressora inválido.');
   await load();
   const now=clock(),previous=current,startedAt=b.state==='printing'||b.state==='paused'?(previous&&['printing','paused'].includes(previous.state)?previous.startedAt:now.toISOString()):previous?.startedAt||null;
-  const next={state:b.state,percent:clamp(b.percent,0,100),remainingMinutes:clamp(b.remainingMinutes,0,100000),layer:clamp(b.layer,0,1000000),totalLayers:clamp(b.totalLayers,0,1000000),nozzle:clamp(b.nozzle,0,500),bed:clamp(b.bed,0,200),job:typeof b.job==='string'?b.job.slice(0,120):null,model:typeof b.model==='string'?b.model.slice(0,40):null,startedAt,lastMinutes:previous?.lastMinutes??null,updated:now.toISOString()};
+  const next={state:b.state,percent:clamp(b.percent,0,100),remainingMinutes:clamp(b.remainingMinutes,0,100000),layer:clamp(b.layer,0,1000000),totalLayers:clamp(b.totalLayers,0,1000000),nozzle:clamp(b.nozzle,0,500),bed:clamp(b.bed,0,200),job:typeof b.job==='string'?b.job.slice(0,120):null,weight:clamp(b.weight,0,100000),model:typeof b.model==='string'?b.model.slice(0,40):null,startedAt,lastMinutes:previous?.lastMinutes??null,lastJob:previous?.lastJob??null,updated:now.toISOString()};
   const ended=previous&&['printing','paused'].includes(previous.state)&&['finished','failed','idle'].includes(next.state);
   if(ended&&previous.startedAt)next.lastMinutes=Math.max(1,Math.round((now.getTime()-Date.parse(previous.startedAt))/60000));
+  // What the machine measured in the last job: offered to the team when it registers the real consumption.
+  if(ended&&next.state!=='idle')next.lastJob={minutes:next.lastMinutes,grams:previous.weight??null,job:previous.job??null,state:next.state,finishedAt:now.toISOString()};
+  const began=previous&&!['printing','paused'].includes(previous.state)&&next.state==='printing';
   if(image&&image.length>3&&image.length<=1500000&&image[0]===0xff&&image[1]===0xd8)snapshot={bytes:image,at:now.getTime()};
   if(!['printing','paused'].includes(next.state))snapshot=null;
   const changed=!previous||previous.state!==next.state;current=next;
   // The database is far away: store the state when it changes or every few minutes, not on every report.
   if(changed||now.getTime()-persisted>300000){persisted=now.getTime();await db.transaction(()=>db.run('INSERT INTO printer_status(id,payload,updated) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated=excluded.updated',JSON.stringify(next),next.updated));}
+  if(began)void onEvent('started',{job:next.job}).catch(()=>console.error('Falha ao ligar a impressão ao pedido.'));
   if(ended&&next.state!=='idle')void onEvent(next.state,{minutes:next.lastMinutes,job:previous.job}).catch(()=>console.error('Falha ao avisar sobre a impressora.'));
   return {ok:true};
  }
@@ -47,5 +51,5 @@ export function createPrinter({db,fail,env=process.env,clock=()=>new Date(),onEv
   if(!onDemand||clock().getTime()-onDemand.at>=10000){pending=pending||liveFrame.get().finally(()=>{pending=null;});const bytes=await pending;if(bytes)onDemand={bytes,at:clock().getTime()};}
   if(!onDemand||clock().getTime()-onDemand.at>=60000)fail('Imagem indisponível.',404);return onDemand.bytes;
  }
- return {report,ingest,status,frame};
+ return {report,ingest,status,frame,lastJob:()=>current?.lastJob??null};
 }
