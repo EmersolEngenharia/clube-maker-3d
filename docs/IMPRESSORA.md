@@ -4,7 +4,7 @@ O portal fica na internet e a impressora na rede da Emersol. Um programa pequeno
 a **ponte**, roda num computador dessa rede, lê a impressora e envia o estado e uma
 foto da câmera ao portal. É só leitura: o portal nunca comanda a impressora.
 
-**Situação:** os dois caminhos foram testados com impressora e Home Assistant simulados, não com a X2D real.
+**Situação (10/11/2026):** em produção pelo Home Assistant. X2D (serial final 2505) na integração Bambu Lab v2.3.0, HA `ha-escritorio` em `100.71.78.56:8123` no mesmo tailnet da VPS. Estado e câmera confirmados no portal. A ponte própria continua testada só com impressora simulada.
 O protocolo é o MQTT local das Bambu Lab, documentado pela comunidade (não pela
 Bambu). O primeiro teste na máquina de verdade ainda precisa ser feito.
 
@@ -72,3 +72,10 @@ VPS estão no mesmo tailnet (painel do Tailscale) e se o endereço abre a partir
 - Cartão mostra "Sem conexão": a ponte parou há mais de 3 minutos.
 
 Não grave código de acesso nem segredo no repositório.
+
+## Configuração atual da X2D
+
+- *Visualização Liveview Apenas LAN*: **ligada** (necessária para a câmera).
+- *Somente LAN*: desligado (mantém Bambu Cloud e Handy).
+- Equipe vê a câmera da mesa a qualquer momento (quadro pedido ao HA só enquanto alguém olha, no
+  máximo a cada 10 s); famílias, só durante a impressão da própria peça.
