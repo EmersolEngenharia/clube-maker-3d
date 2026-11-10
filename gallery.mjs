@@ -50,7 +50,7 @@ export function createGallery({db,storage,fail,str,integer,num,body,json,event,m
 
  async function action(u,g,name,b){
   if(name==='authorize'){
-   if(u.role!=='guardian'||g.family_id==null||g.family_id!==u.family_id)fail('Somente o responsável desta família autoriza a vitrine.',403);
+   if(!(u.role==='guardian'||(u.role==='admin'&&u.family_id))||g.family_id==null||g.family_id!==u.family_id)fail('Somente o responsável desta família autoriza a vitrine.',403);
    if(b.allow===true){if(!['pending','declined'].includes(g.status))fail('Esta peça já está autorizada.',409);
     await run("UPDATE gallery_items SET status='published',maker=?,authorized_by=?,authorized_at=?,updated=? WHERE id=?",b.showName===true?firstName(g.participant):null,u.id,now(),now(),g.id);await event(g.project_id,b.showName===true?'Responsável autorizou a peça na vitrine do clube, com o primeiro nome do participante.':'Responsável autorizou a peça na vitrine do clube, sem o nome do participante.');}
    else{if(g.status==='declined')fail('Esta peça já está fora da vitrine.',409);await run("UPDATE gallery_items SET status='declined',maker=NULL,updated=? WHERE id=?",now(),g.id);await event(g.project_id,'Responsável preferiu não mostrar a peça na vitrine do clube.');}

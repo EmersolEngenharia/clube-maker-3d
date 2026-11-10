@@ -22,7 +22,7 @@ function galleryPage(){
 }
 // Shown on the order page: the team offers the finished piece to the showcase and the guardian decides.
 function galleryProjectCard(p){
- const g=p.gallery,team=operatorUser(),guardian=state.user.role==='guardian'&&p.family_id===state.user.family_id;
+ const g=p.gallery,team=operatorUser(),guardian=guardianUser()&&p.family_id===state.user.family_id;
  if(!g)return team&&['ready','completed'].includes(p.status)?`<div class="card gallery-offer"><h2>Levar para a vitrine</h2><p>Mostre esta peça às outras famílias, com a foto de como ficou. A família autoriza antes de aparecer.</p>${btn(icon('plus')+' Levar para a vitrine','gallery-project-dialog','secondary small')}</div>`:'';
  const text={pending:guardian?'A equipe quer mostrar esta peça na vitrine do clube. Ela só aparece se você autorizar.':'Aguardando a autorização do responsável.',published:g.maker?`Está na vitrine com o nome ${esc(g.maker)}.`:'Está na vitrine, sem o nome do participante.',hidden:'A equipe ocultou esta peça da vitrine.',declined:'A família preferiu não mostrar esta peça.'}[g.status];
  const actions=guardian?(['pending','declined'].includes(g.status)?btn('Autorizar na vitrine','gallery-authorize-dialog','small',`data-id="${g.id}"`)+(g.status==='pending'?btn('Não mostrar','gallery-decline','secondary small',`data-id="${g.id}"`):''):g.status==='published'?btn('Tirar da vitrine','gallery-decline','secondary small',`data-id="${g.id}"`):''):'';
