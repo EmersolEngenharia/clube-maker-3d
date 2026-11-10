@@ -47,7 +47,7 @@ test('portal encontra a X2D no Home Assistant, lê o estado e a câmera e avisa 
  const data=await mkdtemp(join(tmpdir(),'maker-ha-')),db=await createDatabase({data}),ha=fakeHA('token-certo');ha.server.listen(0,'127.0.0.1');await once(ha.server,'listening');
  t.after(async()=>{ha.server.close();await db.close();await rm(data,{recursive:true,force:true});});
  const url='http://127.0.0.1:'+ha.server.address().port;let now=Date.parse('2026-11-10T12:00:00Z');const events=[];
- let assistant;const printer=createPrinter({db,fail,env:{},clock:()=>new Date(now),onEvent:async(k,i)=>{events.push([k,i.minutes]);},printingFamily:async()=>1,otherSource:()=>assistant.active()});
+ let assistant;const printer=createPrinter({db,fail,env:{},clock:()=>new Date(now),onEvent:async(k,i)=>{events.push([k,i.minutes]);},printingFamily:async()=>1,otherSource:()=>assistant.active(),liveFrame:{available:()=>assistant.frame.available(),get:()=>assistant.frame.get()}});
  assistant=createHomeAssistant({db,fail,env:{DATABASE_URL:'postgres://segredo'},clock:()=>new Date(now),ingest:(s,i)=>printer.ingest(s,i)});
  assert.equal((await printer.status({role:'admin'})).configured,false);
  await assert.rejects(assistant.connect({url:'nao é url',token:'x'}),/endereço/);
@@ -62,6 +62,11 @@ test('portal encontra a X2D no Home Assistant, lê o estado e a câmera e avisa 
  const again=createHomeAssistant({db,fail,env:{DATABASE_URL:'postgres://segredo'},clock:()=>new Date(now),ingest:(s,i)=>printer.ingest(s,i)});await again.load();assert.equal(again.active(),true);const ws=ha.calls.ws;
  now+=45*60000;Object.assign(ha.state,{status:'finish',progress:'100',remaining:'0'});await again.tick();assert.equal(ha.calls.ws,ws);
  await new Promise(r=>setTimeout(r,10));assert.deepEqual(events,[['finished',45]]);assert.equal((await printer.status({role:'admin'})).state,'finished');
+ // After the print the plate camera stays available to the team only, fetched on demand and cached for 10 s.
+ assert.equal((await printer.status({role:'admin'})).camera,true);assert.equal((await printer.status({role:'guardian',family_id:1})).camera,false);
+ await assert.rejects(printer.frame({role:'guardian',family_id:1}),e=>e.status===404);
+ const before=ha.calls.camera;await Promise.all([printer.frame({role:'admin'}),printer.frame({role:'admin'})]);assert.equal(ha.calls.camera,before+1);
+ now+=11000;assert.equal((await printer.frame({role:'admin'}))[0],0xff);assert.equal(ha.calls.camera,before+2);
  // Another server key cannot read the token: it asks to reconnect instead of failing silently.
  const other=createHomeAssistant({db,fail,env:{DATABASE_URL:'outro'},ingest:async()=>{}});await other.load();assert.equal(other.active(),false);assert.match((await other.view()).lastError,/Conecte o Home Assistant de novo/);
  // Saving calendar rules keeps the connection.

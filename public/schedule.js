@@ -8,7 +8,9 @@ const schedTime=v=>new Date(v).toLocaleTimeString('pt-BR',{hour:'2-digit',minute
 const schedSpan=m=>{m=Math.round(m);const h=Math.floor(m/60),r=m%60;return h?(r?`${h} h ${r} min`:`${h} h`):`${r} min`;};
 const schedDays=()=>window.innerWidth<760?3:7;
 const printerLabels={offline:'Sem conexão com a impressora',idle:'Livre',printing:'Imprimindo agora',paused:'Impressão em pausa',finished:'Terminou · peça na mesa',failed:'Parada · a equipe vai conferir'};
-let schedTimer=null,schedTicks=0,schedPreview=null;
+let schedTimer=null,schedTicks=0,schedPreview=null,schedLoading=false;
+// The image is swapped only after the new frame loaded, so a slow or missing frame never shows as broken.
+function schedFrame(){const img=$('#printer-live');if(!img||schedLoading)return;schedLoading=true;const next=new Image();next.onload=()=>{schedLoading=false;img.src=next.src;img.closest('.printer-frame')?.classList.add('ready');};next.onerror=()=>{schedLoading=false;};next.src='/api/printer/snapshot?t='+Date.now();}
 async function loadSchedule(){
  const from=state.scheduleFrom||schedDay(new Date()),[s,p]=await Promise.all([api(`/schedule?from=${from}&days=${schedDays()}`),api('/printer')]);
  state.schedule=s;state.printer=p;
@@ -18,8 +20,7 @@ async function loadSchedule(){
 async function schedLive(){
  if(state.page!=='schedule'){clearInterval(schedTimer);schedTimer=null;return;}
  if(document.hidden)return;
- const img=$('#printer-live');
- if(img){const next=new Image();next.onload=()=>{img.src=next.src;};next.src='/api/printer/snapshot?t='+Date.now();}
+ schedFrame();
  if(++schedTicks%3===0){try{state.printer=await api('/printer');const card=$('#printer-card');if(card)card.outerHTML=printerCard();}catch{}}
 }
 function printerCard(){
@@ -27,7 +28,7 @@ function printerCard(){
  const setup=state.schedule?.canConfigure?btn(icon('settings')+(p.configured?' Conexão':' Conectar a impressora'),'printer-ha','secondary small'):'';
  if(!p.configured)return `<section id="printer-card" class="card printer-card"><div class="row spread"><div class="eyebrow">IMPRESSORA AO VIVO</div>${setup}</div><p class="muted">A impressora ainda não está conectada ao portal.${setup?' Conecte pelo Home Assistant da Emersol.':''}</p></section>`;
  const working=['printing','paused'].includes(p.state);
- return `<section id="printer-card" class="card printer-card ${p.state}"><div class="row spread"><div><div class="eyebrow">IMPRESSORA AO VIVO</div><h2><span class="printer-dot"></span>${printerLabels[p.state]}</h2></div>${setup||icon('printer')}</div>${working&&p.percent!=null?`<progress max="100" value="${p.percent}" aria-label="Progresso da impressão"></progress><p class="printer-numbers"><strong>${Math.round(p.percent)}%</strong>${p.remainingMinutes!=null?` · faltam cerca de ${schedSpan(p.remainingMinutes)}`:''}${p.totalLayers?` · camada ${p.layer||0} de ${p.totalLayers}`:''}</p>`:''}${p.camera?`<img id="printer-live" class="printer-live" src="/api/printer/snapshot?t=${Date.now()}" alt="Imagem ao vivo da impressão" width="960" height="540"><p class="field-help">Imagem ao vivo, atualizada a cada 5 segundos. Só a sua família e a equipe veem a sua peça.</p>`:working&&!teamUser()?'<p class="field-help">A imagem ao vivo aparece quando a peça na impressora é da sua família.</p>':''}${teamUser()&&p.online?`<p class="field-help">${[p.job?'Arquivo: '+esc(p.job):'',p.nozzle!=null?`bico ${Math.round(p.nozzle)} °C`:'',p.bed!=null?`mesa ${Math.round(p.bed)} °C`:'',p.lastMinutes?`último trabalho: ${schedSpan(p.lastMinutes)} medidos`:''].filter(Boolean).join(' · ')}</p>`:''}${!p.online?`<p class="field-help">Última leitura: ${schedWhen(p.updated)}.</p>`:''}</section>`;
+ return `<section id="printer-card" class="card printer-card ${p.state}"><div class="row spread"><div><div class="eyebrow">IMPRESSORA AO VIVO</div><h2><span class="printer-dot"></span>${printerLabels[p.state]}</h2></div>${setup||icon('printer')}</div>${working&&p.percent!=null?`<progress max="100" value="${p.percent}" aria-label="Progresso da impressão"></progress><p class="printer-numbers"><strong>${Math.round(p.percent)}%</strong>${p.remainingMinutes!=null?` · faltam cerca de ${schedSpan(p.remainingMinutes)}`:''}${p.totalLayers?` · camada ${p.layer||0} de ${p.totalLayers}`:''}</p>`:''}${p.camera?`<div class="printer-frame"><img id="printer-live" class="printer-live" alt="Imagem ao vivo da impressora" width="960" height="540"><span class="printer-frame-wait">Abrindo a câmera…</span></div><p class="field-help">${working?'Imagem ao vivo, atualizada a cada 5 segundos. Só a sua família e a equipe veem a sua peça.':'Câmera da mesa, visível só para a equipe.'}</p>${(setTimeout(schedFrame,0),'')}`:working&&!teamUser()?'<p class="field-help">A imagem ao vivo aparece quando a peça na impressora é da sua família.</p>':''}${teamUser()&&p.online?`<p class="field-help">${[p.job?'Arquivo: '+esc(p.job):'',p.nozzle!=null?`bico ${Math.round(p.nozzle)} °C`:'',p.bed!=null?`mesa ${Math.round(p.bed)} °C`:'',p.lastMinutes?`último trabalho: ${schedSpan(p.lastMinutes)} medidos`:''].filter(Boolean).join(' · ')}</p>`:''}${!p.online?`<p class="field-help">Última leitura: ${schedWhen(p.updated)}.</p>`:''}</section>`;
 }
 function calendarSvg(){
  const s=state.schedule,cfg=s.settings,days=s.days,col=132,left=46,top=34,hour=20,H=top+24*hour,W=left+days*col,start=Date.parse(s.from),now=Date.parse(s.now),DAY=86400000;

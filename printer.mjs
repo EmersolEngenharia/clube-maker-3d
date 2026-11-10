@@ -4,9 +4,9 @@ import {isTeam} from './permissions.mjs';
 // reads it there and posts the state and a camera frame here. The portal never sends commands to the machine.
 const states=['idle','printing','paused','finished','failed'];
 const digest=s=>createHash('sha256').update(String(s)).digest();
-export function createPrinter({db,fail,env=process.env,clock=()=>new Date(),onEvent=async()=>{},printingFamily=async()=>null,otherSource=()=>false}){
+export function createPrinter({db,fail,env=process.env,clock=()=>new Date(),onEvent=async()=>{},printingFamily=async()=>null,otherSource=()=>false,liveFrame=null}){
  const token=env.PRINTER_BRIDGE_TOKEN||'';
- let current=null,snapshot=null,persisted=0,loaded=false;
+ let current=null,snapshot=null,persisted=0,loaded=false,onDemand=null,pending=null;
  async function load(){if(loaded)return;loaded=true;const row=await db.one('SELECT payload FROM printer_status WHERE id=1');if(row&&!current){try{current=JSON.parse(row.payload);}catch{}}}
  const clamp=(v,min,max)=>typeof v==='number'&&Number.isFinite(v)?Math.min(max,Math.max(min,v)):null;
  async function report(raw,headers){
@@ -36,10 +36,16 @@ export function createPrinter({db,fail,env=process.env,clock=()=>new Date(),onEv
  async function status(u){
   await load();const fresh=current&&clock().getTime()-Date.parse(current.updated)<180000,team=isTeam(u);
   if(!current)return {configured:Boolean(token)||otherSource(),online:false,state:'offline'};
-  const camera=fresh&&snapshot&&clock().getTime()-snapshot.at<120000&&await cameraFor(u);
+  const camera=fresh&&((snapshot&&clock().getTime()-snapshot.at<120000&&await cameraFor(u))||(team&&Boolean(liveFrame?.available())));
   return {configured:true,online:Boolean(fresh),state:fresh?current.state:'offline',percent:fresh?current.percent:null,remainingMinutes:fresh?current.remainingMinutes:null,layer:fresh?current.layer:null,totalLayers:fresh?current.totalLayers:null,updated:current.updated,camera:Boolean(camera),...(team?{nozzle:current.nozzle,bed:current.bed,job:current.job,model:current.model,lastMinutes:current.lastMinutes}:{})};
  }
  // The camera shows the piece on the plate, so only its owner and the team may see it.
- async function frame(u){if(!snapshot||clock().getTime()-snapshot.at>=120000||!await cameraFor(u))fail('Imagem indisponível.',404);return snapshot.bytes;}
+ // Outside a print only the team sees the plate, and the frame is fetched when someone is looking (at most every 10 s).
+ async function frame(u){
+  if(snapshot&&clock().getTime()-snapshot.at<120000&&await cameraFor(u))return snapshot.bytes;
+  if(!isTeam(u)||!liveFrame?.available())fail('Imagem indisponível.',404);
+  if(!onDemand||clock().getTime()-onDemand.at>=10000){pending=pending||liveFrame.get().finally(()=>{pending=null;});const bytes=await pending;if(bytes)onDemand={bytes,at:clock().getTime()};}
+  if(!onDemand||clock().getTime()-onDemand.at>=60000)fail('Imagem indisponível.',404);return onDemand.bytes;
+ }
  return {report,ingest,status,frame};
 }

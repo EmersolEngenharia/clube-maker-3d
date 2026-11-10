@@ -115,5 +115,5 @@ export function createHomeAssistant({db,ingest,fail,env=process.env,fetchImpl=fe
  }
  async function remove(){if(env.HA_URL&&env.HA_TOKEN)fail('A conexão está definida no servidor (runtime.env).',409);await store(null);cache=null;loaded=false;return view();}
  async function view(){const c=await load();return {configured:Boolean(c),source:c?.source||null,url:c?.url||null,printer:c?.deviceId?{name:c.name,model:c.model,camera:Boolean(c.entities?.camera)}:null,lastOk:health.lastOk,lastError:health.lastError};}
- return {tick,connect,remove,view,active:()=>Boolean(cache),load};
+ return {tick,connect,remove,view,load,active:()=>Boolean(cache),frame:{available:()=>Boolean(cache?.entities?.camera),get:async()=>cache?camera(cache):null}};
 }
