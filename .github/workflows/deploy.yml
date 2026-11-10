@@ -71,7 +71,7 @@ jobs:
         run: |
           for i in $(seq 1 12); do code=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/healthz"); [ "$code" = 200 ] && break; sleep 5; done
           echo "healthz: $code"; test "$code" = 200
-          for f in app.js features.js operations.js billing.js gallery.js schedule.js schedule.css pricing.js styles.css brand.css brand-icon.svg; do
+          for f in app.js features.js operations.js billing.js gallery.js schedule.js schedule.css terms.js pricing.js styles.css brand.css brand-icon.svg; do
             [ "$(curl -fsS "$SITE/$f" | sha256sum)" = "$(sha256sum < public/$f)" ] || { echo "::error::$f servido é diferente do commit"; exit 1; }
           done
           echo "Produção confere com ${GITHUB_SHA::12}."

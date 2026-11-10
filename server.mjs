@@ -21,6 +21,7 @@ import { createGallery } from './gallery.mjs';
 import { createSchedule } from './schedule.mjs';
 import { createPrinter } from './printer.mjs';
 import { createHomeAssistant } from './homeassistant.mjs';
+import { createTerms } from './terms.mjs';
 
 if(process.env.NODE_ENV==='production'&&(!process.env.PUBLIC_ORIGIN?.startsWith('https://')||process.env.COOKIE_SECURE!=='1'))throw new Error('Produção exige PUBLIC_ORIGIN HTTPS e COOKIE_SECURE=1.');
 const root=dirname(fileURLToPath(import.meta.url));
@@ -152,7 +153,7 @@ async function handle(req,res){
     if(path==='/api/staff-register'&&method==='POST')rate(req);
     if(await operations.publicRoute(req,res,path,method))return;
     if(await features.publicRoute(req,res,path,method))return;
-    if(path==='/api/session'&&method==='GET'){return json(res,{user:u&&{...u,can_broadcast:await broadcasts.owner(u),guardian:(await guardianSession(req,u))?.name??null},setup:process.env.NODE_ENV!=='production'&&!(await one('SELECT id FROM users LIMIT 1')),config:(await config())});}
+    if(path==='/api/session'&&method==='GET'){return json(res,{user:u&&{...u,can_broadcast:await broadcasts.owner(u),guardian:(await guardianSession(req,u))?.name??null,terms:await terms.flag(u)},setup:process.env.NODE_ENV!=='production'&&!(await one('SELECT id FROM users LIMIT 1')),config:(await config())});}
     if(path==='/api/setup'&&method==='POST'){
       if(process.env.NODE_ENV==='production')fail('A conta inicial é criada pelo administrador do servidor.',403);
       rate(req);
@@ -178,6 +179,7 @@ async function handle(req,res){
     if(await features.route(req,res,path,method,u))return;
     if(await gallery.route(req,res,path,method,u))return;
     if(await schedule.route(req,res,path,method,u))return;
+    if(await terms.route(req,res,path,method,u))return;
     if(path==='/api/printer'&&method==='GET')return json(res,await printer.status(u));
     if(path==='/api/printer/snapshot'&&method==='GET'){const bytes=await printer.frame(u);res.writeHead(200,{'Content-Type':'image/jpeg','Content-Length':bytes.length});res.end(bytes);return;}
     if(path==='/api/logout'&&method==='POST'){const g=await guardianSession(req,u);if(g)await run('DELETE FROM sessions WHERE token=?',hash(g.token));(await run('DELETE FROM sessions WHERE user_id=?',u.id));res.setHeader('Set-Cookie',[cookie('maker_session','',0),cookie('maker_guardian','',0)]);return json(res,{ok:true});}
@@ -278,7 +280,7 @@ async function handle(req,res){
       }
       else if(action==='license'){authorized(u,canOperate(u)?null:['admin']);if(b.checked!==true)fail('Confirme que conferiu a licença do modelo.');if(!['draft','review','question','approval','failed'].includes(p.status))fail('A licença é conferida antes do orçamento.');if(!(await run('UPDATE model_links SET license_checked_by=?,license_checked_at=? WHERE project_id=? AND license_checked_at IS NULL',u.id,now(),id)).changes)fail('Este pedido não tem licença para conferir.',409);(await event(id,'A equipe conferiu a licença do modelo e liberou a impressão.'));}
       else if(action==='approve'){
-        authorized(u,['guardian']);if(p.family_id!==u.family_id)fail('Somente o responsável desta família pode aprovar.',403);(await tx(async ()=>{const current=(await project(id,u));if(current.status!=='approval')fail('Este orçamento não está mais disponível.');const q=(await quote(current));if(b.total!==q.total||b.included!==q.included)fail('O saldo mudou. Reabra o orçamento para conferir o valor atualizado.',409);await quota.reserve(id,current.family_id,q.included);(await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),now(),q.total,now(),id));(await event(id,`Orçamento aprovado. ${q.included} minutos reservados; valor máximo adicional R$ ${(q.total/100).toFixed(2)}.`));await schedule.onApproved(current,u);}));
+        authorized(u,['guardian']);if(p.family_id!==u.family_id)fail('Somente o responsável desta família pode aprovar.',403);(await tx(async ()=>{const current=(await project(id,u));if(current.status!=='approval')fail('Este orçamento não está mais disponível.');const q=(await quote(current));if(b.total!==q.total||b.included!==q.included)fail('O saldo mudou. Reabra o orçamento para conferir o valor atualizado.',409);await terms.require(current.family_id);await quota.reserve(id,current.family_id,q.included);(await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),now(),q.total,now(),id));(await event(id,`Orçamento aprovado. ${q.included} minutos reservados; valor máximo adicional R$ ${(q.total/100).toFixed(2)}.`));await schedule.onApproved(current,u);}));
       }
       else if(action==='revise'){authorized(u,['guardian']);if(p.family_id!==u.family_id)fail('Somente o responsável desta família pode alterar a aprovação.',403);if(p.status!=='approval')fail('Não há orçamento aguardando aprovação.');(await run("UPDATE projects SET status='review',updated=? WHERE id=?",now(),id));(await event(id,'Responsável solicitou uma alteração no orçamento.'));}
       else if(action==='cancel'){authorized(u,canOperate(u)?null:['guardian']);if(!canOperate(u)&&p.family_id!==u.family_id)fail('Ação exclusiva da sua família.',403);if(!['draft','review','question','approval','queued'].includes(p.status))fail('Após iniciar a impressão, converse com a equipe.');(await run("UPDATE projects SET status='cancelled',included=0,charge=0,updated=? WHERE id=?",now(),id));(await event(id,'Pedido cancelado sem cobrança. Reserva de horas liberada.'));await run('DELETE FROM benefit_allocations WHERE project_id=?',id);await schedule.onCancelled(p,u);}
@@ -314,7 +316,9 @@ const gallery=createGallery({db,storage,fail,str,integer,num,body,json,event,mod
 const automationTimer=setInterval(()=>automation.tick().catch(()=>console.error('Falha no ciclo de automação WhatsApp.')),60000);automationTimer.unref();
 const broadcasts=createBroadcasts({db,storage,fail});
 const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.')),20000);broadcastTimer.unref();
-const schedule=createSchedule({db,quota,billing,broadcasts,config,fail,str,num,integer,body,json,event});
+const terms=createTerms({db,fail,str,body,json,config,broadcasts});
+await db.transaction(()=>terms.seed());
+const schedule=createSchedule({db,quota,billing,broadcasts,config,fail,str,num,integer,body,json,event,requireTerms:fid=>terms.require(fid)});
 await db.transaction(()=>schedule.backfill());
 const printer=createPrinter({db,fail,onEvent:(kind,info)=>schedule.onPrinter(kind,info),printingFamily:()=>schedule.printingFamily(),otherSource:()=>homeAssistant.active(),liveFrame:{available:()=>homeAssistant.frame.available(),get:()=>homeAssistant.frame.get()}});
 schedule.useMeasured(()=>printer.lastJob());
@@ -327,7 +331,7 @@ const scheduleTimer=setInterval(scheduleTick,60000);scheduleTimer.unref();
 // can keep CSS/JS for a year and skip revalidation; a new release changes the hash.
 const staticTypes={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
 function staticEntry(bytes,file){const gzip=gzipSync(bytes,{level:9}),br=brotliCompressSync(bytes,{params:{[zlibConstants.BROTLI_PARAM_QUALITY]:11}});return {bytes,gzip,br,version:hash(bytes).slice(0,16),etags:{identity:'"'+hash(bytes)+'"',gzip:'"'+hash(gzip)+'"',br:'"'+hash(br)+'"'},type:staticTypes[extname(file)]};}
-const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/messages.js':'messages.js','/gallery.js':'gallery.js','/schedule.js':'schedule.js','/schedule.css':'schedule.css','/pricing.js':'pricing.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg','/guia-impressao-3d.html':'guia-impressao-3d.html'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
+const staticFiles=new Map(Object.entries({'/app.js':'app.js','/features.js':'features.js','/operations.js':'operations.js','/billing.js':'billing.js','/messages.js':'messages.js','/gallery.js':'gallery.js','/schedule.js':'schedule.js','/schedule.css':'schedule.css','/terms.js':'terms.js','/pricing.js':'pricing.js','/styles.css':'styles.css','/themes.css':'themes.css','/art.svg':'art.svg','/brand.css':'brand.css','/brand-icon.svg':'brand-icon.svg','/favicon.svg':'favicon.svg','/guia-impressao-3d.html':'guia-impressao-3d.html'}).map(([url,file])=>[url,staticEntry(readFileSync(join(root,'public',file)),file)]));
 // The member guide is also offered as a standalone download, so its stylesheet stays inline and is allowed by hash.
 {const guide=staticFiles.get('/guia-impressao-3d.html'),style=guide.bytes.toString('utf8').match(/<style>([\s\S]*?)<\/style>/)[1];guide.csp=`default-src 'none'; style-src 'sha256-${createHash('sha256').update(style).digest('base64')}'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`;}
 staticFiles.set('/',staticEntry(Buffer.from(readFileSync(join(root,'public','index.html'),'utf8').replace(/(href|src)="(\/[\w.-]+\.(?:css|js|svg))"/g,(m,attr,url)=>staticFiles.has(url)?`${attr}="${url}?v=${staticFiles.get(url).version}"`:m)),'index.html'));

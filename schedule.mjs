@@ -74,7 +74,7 @@ const when=d=>{const p=Object.fromEntries(new Intl.DateTimeFormat('pt-BR',{timeZ
 const span=m=>{const h=Math.floor(m/60),r=m%60;return h?(r?`${h} h ${r} min`:`${h} h`):`${r} min`;};
 const number=id=>'#'+String(id).padStart(3,'0');
 
-export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,integer,body,json,event,env=process.env,clock=()=>new Date()}){
+export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,integer,body,json,event,env=process.env,clock=()=>new Date(),requireTerms=async()=>{}}){
  const one=(q,...a)=>db.one(q,...a),all=(q,...a)=>db.all(q,...a),run=(q,...a)=>db.run(q,...a);
  const stamp=()=>clock().toISOString(),origin=env.PUBLIC_ORIGIN||'https://maker3d.emersol.ai';
  let running=false,measured=()=>null;
@@ -256,6 +256,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  // ---- member and team actions ----
  async function book(u,b){
   if(!u.family_id||!['guardian','learner','admin'].includes(u.role))fail('Agendamentos são feitos pela conta da família.',403);
+  await requireTerms(u.family_id);
   const cfg=await settings(),c=await config(),f=readFilaments(b,c),minutes=integer(b.minutes,'Tempo de impressão',1,10000),start=parseStart(b.startsAt);
   const active=await all("SELECT s.project_id FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.family_id=? AND p.status IN ('approval','queued')",u.family_id);
   if(active.length>=cfg.maxActive)fail(`Sua família já tem ${active.length} agendamentos aguardando a impressora. Conclua ou cancele um deles para agendar outro.`);

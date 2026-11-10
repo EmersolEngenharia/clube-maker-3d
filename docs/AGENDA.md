@@ -102,3 +102,16 @@ abertos por família, lembrete de retirada, local de retirada e WhatsApp da equi
   Migração `maker3d_print_schedule` aplicada antes, no projeto Emersoft (4 tabelas novas, RLS ligado).
   Validação externa: `/healthz` 200, HTTP→HTTPS 301, SHA256 de todos os assets iguais ao commit, `/api/schedule` e `/api/printer/report` respondem 401 sem credencial.
   Rollback: `previous-release.txt` do backup da implantação (guia em `docs/DEPLOY_RAPIDO.md`); as tabelas novas não atrapalham a versão anterior.
+
+## Regulamento e aceite (desde 10/11/2026)
+
+- Menu **Regulamento** (Configurações para a administração, Conta para as famílias).
+- O administrador edita um rascunho (`## ` para títulos, `- ` para itens), vê como fica e publica.
+  Cada publicação é uma nova versão numerada e avisa todas as famílias pelo WhatsApp.
+- O responsável da família aceita no portal; fica registrado quem, quando e qual versão (também no
+  log de auditoria). Aprendizes leem, mas não aceitam.
+- Sem o aceite da versão atual, a família não agenda nem aprova orçamento. Enquanto nenhuma versão
+  for publicada, nada é bloqueado.
+- O primeiro rascunho (`db/regulamento-proposta.md`) é montado com os valores atuais do clube e
+  **precisa ser revisado pela administração antes de publicar**.
+- Migração: `db/terms-postgres.sql` (`supabase/migrations/20261110180000_maker3d_terms.sql`).

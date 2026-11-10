@@ -49,3 +49,6 @@
 .schedule-card h2{margin:6px 0}.schedule-card h2 small{font-weight:400;font-size:14px;color:var(--muted)}
 .row.wrap{flex-wrap:wrap}
 @media(max-width:760px){.filament-row{grid-template-columns:1fr 1fr}.booking-row{align-items:flex-start}}
+/* Regulamento */
+.terms-text h3{margin:22px 0 6px;font-size:16px}.terms-text p,.terms-text li{font-size:14px;line-height:1.65}.terms-text ul{padding-left:20px;margin:6px 0}
+.terms-banner{margin-bottom:18px}.terms-accept{border-color:var(--orange)}
