@@ -79,3 +79,10 @@ abertos por família, lembrete de retirada, local de retirada e WhatsApp da equi
 | Cobrança | link do PIX | falha ao emitir |
 | Pagamento | recebido | recebido e baixado |
 | Peça não retirada | lembrete após N dias | — |
+
+## Registro de publicação
+
+- **10/11/2026** — publicada no commit `583d6cb` (anterior: `bf41d7f`), pelo GitHub Actions (run 42807006266).
+  Migração `maker3d_print_schedule` aplicada antes, no projeto Emersoft (4 tabelas novas, RLS ligado).
+  Validação externa: `/healthz` 200, HTTP→HTTPS 301, SHA256 de todos os assets iguais ao commit, `/api/schedule` e `/api/printer/report` respondem 401 sem credencial.
+  Rollback: `previous-release.txt` do backup da implantação (guia em `docs/DEPLOY_RAPIDO.md`); as tabelas novas não atrapalham a versão anterior.

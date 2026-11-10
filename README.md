@@ -12,7 +12,7 @@ arquivo fatiado, validação e edição pela equipe com aviso no WhatsApp, cota
 contabilizada na hora, PIX automático pelo Asaas com baixa pelo webhook, aviso de
 retirada e estado ao vivo da impressora por uma ponte na rede local.
 [Como funciona](docs/AGENDA.md) · [Impressora ao vivo](docs/IMPRESSORA.md).
-**Ainda não publicada**: exige aplicar `db/schedule-postgres.sql` antes.
+**Publicada em 10/11/2026** (`583d6cb`).
 
 ## Atualização 0.7.0 — WhatsApp financeiro
 
