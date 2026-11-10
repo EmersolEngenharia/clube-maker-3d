@@ -1,6 +1,6 @@
 # WhatsApp — Evolution API e automação financeira
 
-Configuração autorizada: https://evolution.emersol.ai, instância Emerson (v2.3.7
+Configuração autorizada: https://evolution.emersol.ai, instância Emerson (padrão do runtime; desde 10/11/2026 a administração pode trocar em Cobranças → WhatsApp → Trocar instância, depois que o portal confere que ela está conectada) (v2.3.7
 segundo a documentação da infraestrutura). Conexão `open` e credencial específica
 da instância verificadas por consulta de leitura; nenhum envio de teste real.
 

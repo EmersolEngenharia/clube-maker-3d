@@ -79,7 +79,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  const stamp=()=>clock().toISOString(),origin=env.PUBLIC_ORIGIN||'https://maker3d.emersol.ai';
  let running=false,measured=()=>null;
  const guardianLike=u=>u.role==='guardian'||(u.role==='admin'&&Boolean(u.family_id));
- async function settings(){const row=await one('SELECT value FROM schedule_settings WHERE id=1');let saved={};try{saved=row?JSON.parse(row.value):{};}catch{}const {homeassistant,...rest}=saved;return {...scheduleDefaults,...rest};}
+ async function settings(){const row=await one('SELECT value FROM schedule_settings WHERE id=1');let saved={};try{saved=row?JSON.parse(row.value):{};}catch{}const {homeassistant,whatsapp,...rest}=saved;return {...scheduleDefaults,...rest};}
  const slotOf=id=>one('SELECT * FROM print_slots WHERE project_id=?',id);
  async function intervals(exclude=null){
   const from=new Date(clock().getTime()-1440*MIN).toISOString();
@@ -344,7 +344,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   if(path==='/api/schedule/settings'){
    if(!isAdmin(u))fail('Ação exclusiva da administração.',403);const row=await one('SELECT value FROM schedule_settings WHERE id=1');let kept={};try{kept=row?JSON.parse(row.value):{};}catch{}
    // The Home Assistant connection lives in the same row and is kept when the calendar rules change.
-   const value=JSON.stringify({...cleanSettings(b,fail),...(kept.homeassistant?{homeassistant:kept.homeassistant}:{})});
+   const value=JSON.stringify({...cleanSettings(b,fail),...(kept.homeassistant?{homeassistant:kept.homeassistant}:{}),...(kept.whatsapp?{whatsapp:kept.whatsapp}:{})});
    await run('INSERT INTO schedule_settings(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value',value);await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'schedule.settings','1',stamp());json(res,{ok:true});return true;
   }
   return false;

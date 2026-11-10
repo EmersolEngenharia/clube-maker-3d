@@ -50,7 +50,7 @@ export function createAutomation({db,billing,asaas,env=process.env,evolution,clo
  if(due===yd&&hour()>=9)await db.transaction(()=>enqueue({key:'overdue:'+c.id+':'+p.id,fid:a.family_id,kind:'overdue',contract:c.id,charge:p.id,due}));
  }
  }
- async function diagnostic(u,test=false){if(!isAdmin(u))fail('Ação exclusiva da administração.',403);const base={enabled:enabled(),configured:client.configured,url:env.EVOLUTION_URL||'',instance:env.EVOLUTION_INSTANCE||'',keyPresent:Boolean(env.EVOLUTION_API_KEY),schedule:'Dia 1 às 09h, America/Sao_Paulo; lembrete D+1 às 09h'};if(!test||!client.configured)return base;try{return {...base,...await client.diagnostic()};}catch{return {...base,connected:false,error:'Não foi possível conectar à instância. Confira o runtime e a Evolution.'};}}
+ async function diagnostic(u,test=false){if(!isAdmin(u))fail('Ação exclusiva da administração.',403);const base={enabled:enabled(),configured:client.configured,url:env.EVOLUTION_URL||'',instance:client.instance||'',keyPresent:Boolean(env.EVOLUTION_API_KEY),schedule:'Dia 1 às 09h, America/Sao_Paulo; lembrete D+1 às 09h'};if(!test||!client.configured)return base;try{return {...base,...await client.diagnostic()};}catch{return {...base,connected:false,error:'Não foi possível conectar à instância. Confira o runtime e a Evolution.'};}}
  async function overview(u){if(!canFinance(u)&&u.role!=='guardian')fail('Acesso não autorizado.',403);const all=canFinance(u),scope=all?[]:[u.family_id];
  // Read-only and batched: one round trip regardless of how many families exist. Seeding writes under the
  // global write lock, so it only runs when a family really lacks (or can now fill) its automation row.
@@ -63,7 +63,7 @@ export function createAutomation({db,billing,asaas,env=process.env,evolution,clo
  let d=await read();
  if(d.missing.length){await db.transaction(()=>seed());d=await read();}
  const families=d.families.map(a=>({...settingsView(a.family_id,a,d.guardians.filter(g=>g.family_id===a.family_id).map(({family_id,...g})=>g)),name:a.name,plan:a.plan}));
- return {families,outbox:d.outbox,enabled:enabled(),canManage:all};}
+ return {families,outbox:d.outbox,enabled:enabled(),canManage:all,instance:all?client.instance||null:null};}
  async function deliver(job){const context=await db.withRequest(async()=>({a:await db.one('SELECT * FROM family_automation WHERE family_id=?',job.family_id),g:await recipient(job.family_id)}));const {a,g}=context;if(!a||!g||!whatsappNumber(g.whatsapp))return {skip:'Responsável principal sem WhatsApp válido.'};
  if(job.kind==='report'){if(!a.reports_enabled)return {cancel:true};return {number:g.whatsapp,text:(await db.withRequest(()=>familyReport(db,job.family_id,job.report_period))).text};}
  if(!a.billing_enabled)return {cancel:true};
@@ -92,5 +92,20 @@ export function createAutomation({db,billing,asaas,env=process.env,evolution,clo
   }
  }finally{running=false;}}
  async function retry(u,id,confirmed){if(!canFinance(u))fail('Ação exclusiva do financeiro.',403);if(confirmed!==true)fail('Confirme que verificou o envio na Evolution.');await db.transaction(async()=>{const j=await db.one('SELECT * FROM whatsapp_outbox WHERE id=?',id);if(!j||!['failed','needs_review'].includes(j.status))fail('Mensagem indisponível para nova tentativa.');await db.run("UPDATE whatsapp_outbox SET status='pending',available_at=?,updated=?,last_error=NULL WHERE id=?",stamp(),stamp(),id);await db.run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'whatsapp.retry',id,stamp());});return {ok:true};}
- return {seed,enrolled,settings,save,onCharge,diagnostic,overview,tick,retry,enabled};
+ // Which Evolution instance (WhatsApp number) sends every message of the portal. The runtime value is the default;
+ // the administration can switch to another instance of the same server after the portal confirms it is connected.
+ async function readInstance(){const row=await db.withRequest(()=>db.one('SELECT value FROM schedule_settings WHERE id=1'));let v={};try{v=row?JSON.parse(row.value):{};}catch{}return v.whatsapp?.instance||null;}
+ async function loadInstance(){const saved=await readInstance();if(saved)client.instance=saved;return client.instance;}
+ async function setInstance(u,name){
+  if(!isAdmin(u))fail('Ação exclusiva da administração.',403);
+  const instance=typeof name==='string'?name.trim():'';if(!/^[\p{L}\p{N} ._-]{1,60}$/u.test(instance))fail('Informe o nome da instância como aparece na Evolution.');
+  const probe=new EvolutionClient({url:client.url,key:client.key,instance,fetchImpl:client.fetch});
+  let state;try{state=await probe.diagnostic();}catch{fail(`Não consegui acessar a instância "${instance}" com a chave do servidor. Confira o nome na Evolution.`,409);}
+  if(!state.connected)fail(`A instância "${instance}" existe, mas não está conectada ao WhatsApp (estado: ${state.state}). Conecte pelo QR Code na Evolution e tente de novo.`,409);
+  await db.transaction(async()=>{const row=await db.one('SELECT value FROM schedule_settings WHERE id=1');let v={};try{v=row?JSON.parse(row.value):{};}catch{}v.whatsapp={instance};
+   await db.run('INSERT INTO schedule_settings(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value',JSON.stringify(v));
+   await db.run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'whatsapp.instance',instance,stamp());});
+  client.instance=instance;return {instance,connected:true,default:env.EVOLUTION_INSTANCE||null};
+ }
+ return {seed,enrolled,settings,save,onCharge,diagnostic,overview,tick,retry,enabled,loadInstance,setInstance,instance:()=>client.instance};
 }

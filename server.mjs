@@ -6,6 +6,7 @@ import {isTeam,isAdmin,canFinance,canOperate} from './permissions.mjs';
 import {createQuota,computeQuota} from './quota.mjs';
 import {createAutomation} from './messaging/automation.mjs';
 import {createBroadcasts,mediaType} from './messaging/broadcasts.mjs';
+import {EvolutionClient} from './messaging/evolution.mjs';
 import {AsaasProvider} from './payments/asaas.mjs';
 import {createBilling} from './payments/billing.mjs';
 import {createOperations} from './operations.mjs';
@@ -106,6 +107,7 @@ async function billingRequest(req,res,path){
  if(path==='/api/billing/automation'&&method==='GET')return json(res,await automation.overview(u));
  if(path==='/api/billing/automation'&&method==='POST')return json(res,await automation.save(u,b));
  if(path==='/api/billing/whatsapp/diagnostic'&&method==='GET')return json(res,await automation.diagnostic(u));
+ if(path==='/api/billing/whatsapp/instance'&&method==='POST')return json(res,await automation.setInstance(u,b.instance));
  if(path==='/api/billing/whatsapp/test'&&method==='POST')return json(res,await automation.diagnostic(u,true));
  if(path==='/api/billing/whatsapp/retry'&&method==='POST')return json(res,await automation.retry(u,b.id,b.confirmed));
  if(path==='/api/billing'&&method==='GET')return json(res,await db.withRequest(()=>billing.list(u)));
@@ -310,11 +312,14 @@ const operations=createOperations({db,quota,fail,str,integer,body,json,creds,pas
 await db.transaction(()=>operations.backfill());
 const billing=createBilling({db,fail,str,integer,config,onCharge:c=>automation.onCharge(c),notify:e=>schedule.onPaid(e)});
 const asaas=new AsaasProvider({key:process.env.ASAAS_API_KEY,webhookToken:process.env.ASAAS_WEBHOOK_TOKEN,environment:process.env.ASAAS_ENV||'production'});
-const automation=createAutomation({db,billing,asaas,fail});
+// One WhatsApp client for billing, reports and notices, so switching the instance changes every sender at once.
+const evolution=new EvolutionClient({url:process.env.EVOLUTION_URL,key:process.env.EVOLUTION_API_KEY,instance:process.env.EVOLUTION_INSTANCE});
+const automation=createAutomation({db,billing,asaas,fail,evolution});
+await automation.loadInstance();
 const features=createFeatures({db,quota,storage,fail,str,integer,body,json,config,password,creds,login,automation});
 const gallery=createGallery({db,storage,fail,str,integer,num,body,json,event,modelInfo:url=>{const c=modelCache.get(url);return c?.expires>Date.now()?c.info:null;}});
 const automationTimer=setInterval(()=>automation.tick().catch(()=>console.error('Falha no ciclo de automação WhatsApp.')),60000);automationTimer.unref();
-const broadcasts=createBroadcasts({db,storage,fail});
+const broadcasts=createBroadcasts({db,storage,fail,evolution});
 const broadcastTimer=setInterval(()=>broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.')),20000);broadcastTimer.unref();
 const terms=createTerms({db,fail,str,body,json,config,broadcasts});
 await db.transaction(()=>terms.seed());
