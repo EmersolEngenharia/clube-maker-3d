@@ -17,7 +17,17 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
  const audit=(u,action,id)=>db.run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,action,id,now());
  const safe=c=>({id:c.id,familyId:c.family_id,projectId:c.project_id,purpose:c.purpose,plan:c.plan,provider:c.provider,environment:c.environment,method:c.method,installments:c.installments,amountCents:c.amount_cents,status:c.status,checkoutUrl:c.checkout_url,currentPeriodEnd:c.current_period_end,created:c.created,error:c.error_note});
  // A project may be paid in parts (an estimate first, the difference after the real consumption).
- const projectReceived=async id=>Number((await db.one("SELECT COALESCE(SUM(cents),0) n FROM cash_entries WHERE voided_at IS NULL AND (source_key=? OR source_key LIKE ?)",'project:'+id,'project:'+id+':part:%')).n);
+ // What already covers a project: money received for it plus family credit applied to it.
+ const projectReceived=async id=>Number((await db.one("SELECT COALESCE((SELECT SUM(cents) FROM cash_entries WHERE voided_at IS NULL AND (source_key=? OR source_key LIKE ?)),0)+COALESCE((SELECT -SUM(cents) FROM family_credits WHERE project_id=? AND kind='use'),0) n",'project:'+id,'project:'+id+':part:%',id)).n);
+ const creditBalance=async fid=>Number((await db.one('SELECT COALESCE(SUM(cents),0) n FROM family_credits WHERE family_id=?',fid)).n);
+ // Whatever covers a project beyond its cost becomes family credit for the next order: the minimum PIX,
+ // a final cost smaller than what was prepaid, or a cancelled order already paid. Returns the change made.
+ async function settleCredit(projectId){
+  const p=await db.one('SELECT id,family_id,charge FROM projects WHERE id=?',projectId);if(!p)return 0;
+  const granted=Number((await db.one("SELECT COALESCE(SUM(cents),0) n FROM family_credits WHERE project_id=? AND kind IN ('excess','adjust')",projectId)).n),delta=Math.max(0,await projectReceived(projectId)-p.charge)-granted;
+  if(delta)await db.run('INSERT INTO family_credits(id,family_id,project_id,kind,cents,reason,created) VALUES(?,?,?,?,?,?,?)',randomUUID(),p.family_id,projectId,delta>0?'excess':'adjust',delta,delta>0?'Valor pago além do custo do pedido #'+String(projectId).padStart(3,'0'):'Ajuste do crédito do pedido #'+String(projectId).padStart(3,'0'),now());
+  return delta;
+ }
  async function get(id,u){const c=await db.one('SELECT * FROM billing_contracts WHERE id=?',id);if(!c)fail('Cobrança não encontrada.',404);need(actor(u,c.family_id));return c;}
  async function finalize(id,result){return db.transaction(async()=>{
   const c=await db.one('SELECT * FROM billing_contracts WHERE id=?',id);
@@ -25,7 +35,8 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
   await db.run("UPDATE billing_contracts SET gateway_subscription_id=?,gateway_charge_id=?,gateway_installment_id=?,checkout_url=?,status=CASE WHEN status IN ('creating','needs_review') THEN 'pending' ELSE status END,error_note=NULL,updated=? WHERE id=?",result.gatewaySubscriptionId||null,result.gatewayChargeId,result.gatewayInstallmentId||null,result.checkoutUrl||null,now(),id);
   return safe(await db.one('SELECT * FROM billing_contracts WHERE id=?',id));
  });}
- async function create(b,u){
+ // opts come from the server only (never from a request body): minimumCents raises a small project charge to the gateway minimum.
+ async function create(b,u,opts={}){
   const intent=await db.transaction(async()=>{
    need(canFinance(u)||u.role==='guardian');const fid=integer(b.familyId||u.family_id,'Família',1,2147483647);need(actor(u,fid));const f=await db.one('SELECT * FROM families WHERE id=?',fid);if(!f)fail('Família não encontrada.',404);
    const key=str(b.requestKey,'Identificação da cobrança',100),existing=await db.one('SELECT * FROM billing_contracts WHERE request_key=?',key);if(existing){need(actor(u,existing.family_id));return {existing};}
@@ -34,7 +45,7 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
    const installments=b.method==='card_installments'?integer(b.installments??1,'Parcelas',1,12):1;
    if(b.purpose==='project'&&!b.projectId)fail('Escolha um projeto concluído.');
    const projectId=b.projectId?integer(b.projectId,'Projeto',1,2147483647):null,cfg=await config();let amount=plan==='annual'?cfg.annual:cfg.monthly;
-   if(projectId){const p=await db.one('SELECT * FROM projects WHERE id=? AND family_id=?',projectId,fid);if(!p||!['queued','printing','ready','completed'].includes(p.status)||p.paid)fail('O projeto precisa estar aprovado e sem pagamento.');if(recurring(b.method))fail('Impressões avulsas não podem gerar assinatura.');amount=p.charge-await projectReceived(projectId);}
+   if(projectId){const p=await db.one('SELECT * FROM projects WHERE id=? AND family_id=?',projectId,fid);if(!p||!['queued','printing','ready','completed'].includes(p.status)||p.paid)fail('O projeto precisa estar aprovado e sem pagamento.');if(recurring(b.method))fail('Impressões avulsas não podem gerar assinatura.');amount=p.charge-await projectReceived(projectId);if(amount>0&&opts.minimumCents>amount)amount=opts.minimumCents;}
    integer(amount,'Valor em centavos',1,10000000);
    const pending=await db.one("SELECT id FROM billing_contracts WHERE family_id=? AND purpose=? AND (status IN ('creating','pending','needs_review') OR (provider='asaas' AND method IN ('pix_recurring','card_recurring') AND status IN ('active','past_due')))"+(projectId?' AND project_id=?':''),fid,projectId?'project':'membership',...(projectId?[projectId]:[]));
    if(pending)fail('Já existe cobrança ou recorrência em andamento. Abra a cobrança existente antes de criar outra.',409);
@@ -89,7 +100,7 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
   if(c.purpose==='membership')paymentId=Number((await db.run('INSERT INTO payments(family_id,description,cents,created) VALUES(?,?,?,?)',c.family_id,description,event.amountCents,now())).lastInsertRowid);
   const entryId=Number((await db.run('INSERT INTO cash_entries(scope,family_id,kind,category,description,cents,entry_date,source_key,created_by,created) VALUES(?,?,?,?,?,?,?,?,?,?)','club',c.family_id,'income',c.purpose==='project'?'printing':'membership',description,event.amountCents,entryDate,paymentId?'payment:'+paymentId:(await db.one('SELECT id FROM cash_entries WHERE source_key=?','project:'+c.project_id))?'project:'+c.project_id+':part:'+event.gatewayChargeId:'project:'+c.project_id,c.created_by,now())).lastInsertRowid);
   await db.run('INSERT INTO billing_receipts(gateway,gateway_charge_id,contract_id,amount_cents,status,payment_id,entry_id,entitlement_end,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',source,event.gatewayChargeId,c.id,event.amountCents,'paid',paymentId,entryId,entitlement,now(),now());
-  if(c.project_id)await db.run('UPDATE projects SET paid=CASE WHEN charge<=? THEN 1 ELSE 0 END WHERE id=?',await projectReceived(c.project_id),c.project_id);
+  if(c.project_id){await db.run('UPDATE projects SET paid=CASE WHEN charge<=? THEN 1 ELSE 0 END WHERE id=?',await projectReceived(c.project_id),c.project_id);await settleCredit(c.project_id);}
   await db.run("UPDATE billing_contracts SET status=CASE WHEN status='cancelled' THEN status ELSE 'active' END,current_period_end=COALESCE(?,current_period_end),updated=? WHERE id=?",entitlement,now(),c.id);
   return {paid:true};
  }
@@ -120,5 +131,5 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
  async function manualPaid(id,u){need(canFinance(u));const c=await db.withRequest(()=>get(id,u));if(c.provider!=='manual')fail('Confirme pagamentos Asaas pelo webhook. Para pagamentos externos, confira ou cancele a cobrança antes de registrar.',409);return handleEvent({type:'payment.paid',gatewayChargeId:'manual:'+c.id,externalReference:c.id,amountCents:c.amount_cents,paidDate:localDate()},'manual');}
  async function list(u){need(canFinance(u)||u.role==='guardian');const rows=await db.all('SELECT b.*,f.name family_name FROM billing_contracts b JOIN families f ON f.id=b.family_id'+(canFinance(u)?'':' WHERE b.family_id=?')+' ORDER BY b.created DESC LIMIT 100',...(canFinance(u)?[]:[u.family_id]));return {charges:rows.map(c=>({...safe(c),familyName:c.family_name})),configured:enabled,provider:selected.id,environment:enabled?(env.ASAAS_ENV||'production'):'manual',canManage:canFinance(u),methods};}
  async function diagnostic(u,test=false){need(isAdmin(u));const base={configured:enabled,apiKeyPresent:configured,webhookTokenPresent:Boolean(env.ASAAS_WEBHOOK_TOKEN||provider),environment:env.ASAAS_ENV||'production',webhookPath:'/api/webhooks/asaas',fallback:selected.id==='manual'};if(!test||!configured)return base;try{return {...base,connected:true,account:await asaas.diagnostic()};}catch(e){return {...base,connected:false,error:e.message};}}
- return {automatic:enabled,create,refresh,resolve,cancel,manualPaid,list,diagnostic,handleEvent,parseWebhook:(raw,headers)=>asaas.parseWebhook(raw,headers),async pix(id,u){const c=await db.withRequest(()=>get(id,u));if(!enabled||c.environment!==(env.ASAAS_ENV||'production'))fail('Configure o mesmo ambiente do Asaas para consultar o PIX.',503);if(c.provider!=='asaas'||!c.method.startsWith('pix_'))fail('QR Code indisponível para esta cobrança.',409);return asaas.pixQRCode(c.gateway_charge_id);}};
+ return {automatic:enabled,projectReceived,creditBalance,settleCredit,create,refresh,resolve,cancel,manualPaid,list,diagnostic,handleEvent,parseWebhook:(raw,headers)=>asaas.parseWebhook(raw,headers),async pix(id,u){const c=await db.withRequest(()=>get(id,u));if(!enabled||c.environment!==(env.ASAAS_ENV||'production'))fail('Configure o mesmo ambiente do Asaas para consultar o PIX.',503);if(c.provider!=='asaas'||!c.method.startsWith('pix_'))fail('QR Code indisponível para esta cobrança.',409);return asaas.pixQRCode(c.gateway_charge_id);}};
 }

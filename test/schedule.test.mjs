@@ -235,20 +235,36 @@ test('impressão interrompida desconta do estoque o filamento gasto, sem cobrar'
  f.advance(1);await f.db.transaction(()=>f.schedule.onFailed(p,u.admin,'de novo',20));assert.equal((await f.db.one('SELECT SUM(grams) n FROM stock_uses')).n,70);
 });
 
-test('valor abaixo do mínimo não vai ao Asaas, e uma recusa mostra o motivo do Asaas à equipe',async t=>{
- const f=await fixture(t),{users:u}=f;
- // 30 min within the allowance and 9.9 g of the test filament: R$ 1,19, below the R$ 5,00 minimum.
- const {id}=await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:30,filaments:[{material:'PLA',color:'Azul',grams:9.9}]}));
- await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});f.advance(60);await f.start(id);await f.finish(id,30,9.9);
- await f.schedule.tick();await f.schedule.tick();
- assert.equal(f.charges(),0);assert.equal((await f.project(id)).charge,119);
- assert.ok(f.sent.some(m=>m.to==='family:1'&&/R\$\s1,19 a pagar\. O valor é menor que o mínimo para gerar PIX automático \(R\$\s5,00\)\. Pague na retirada/.test(m.text)));
- assert.ok(f.sent.some(m=>m.to==='team'&&/abaixo do mínimo de R\$\s5,00.*Registrar pagamento/.test(m.text)));
- assert.equal((await f.db.one('SELECT charge_error FROM print_slots WHERE project_id=?',id)).charge_error,null);
- // A lower minimum sends it to the gateway; a refusal keeps the gateway's own words.
- const g=await fixture(t,{createCharge:async()=>{throw new ProviderError('O valor da cobrança deve ser maior que R$ 5,00.',502);}});
- const b=(await g.call(g.users.ana,'/api/schedule/bookings',g.booking({startsAt:at('2026-11-09',11).toISOString()}))).id;
- await g.call(g.users.admin,`/api/schedule/bookings/${b}/validate`,{});g.advance(60);await g.start(b);await g.finish(b,180,100);await g.schedule.tick();
- assert.equal((await g.db.one('SELECT charge_error FROM print_slots WHERE project_id=?',b)).charge_error,'O Asaas recusou: O valor da cobrança deve ser maior que R$ 5,00.');
- assert.ok(g.sent.some(m=>m.to==='team'&&/O Asaas recusou: O valor da cobrança deve ser maior que R\$ 5,00\./.test(m.text)));
+test('valor abaixo do mínimo gera PIX mínimo; a diferença vira crédito e é abatida no próximo pedido',async t=>{
+ const f=await fixture(t),{users:u}=f,amounts=[];
+ const paid=async(projectId,n)=>{const c=await f.db.one("SELECT * FROM billing_contracts WHERE project_id=? AND status='pending'",projectId);amounts.push(c.amount_cents);await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_'+n,externalReference:c.id,amountCents:c.amount_cents,paidDate:'2026-11-09'});return c;};
+ const print=async(id,minutes,grams)=>{await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});f.advance(60);await f.start(id);await f.finish(id,minutes,grams);await f.schedule.tick();};
+ // 30 min within the allowance and 9.9 g of the test filament: R$ 1,19 -> PIX of R$ 5,00.
+ const a=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:30,filaments:[{material:'PLA',color:'Azul',grams:9.9}]}))).id;
+ await print(a,30,9.9);assert.equal((await f.project(a)).charge,119);assert.equal(f.charges(),1);
+ await paid(a,1);assert.deepEqual(amounts,[500]);
+ assert.equal((await f.project(a)).paid,1);assert.equal(await f.billing.creditBalance(1),381);
+ assert.deepEqual((await f.db.all('SELECT kind,cents,project_id FROM family_credits')).map(r=>[r.kind,r.cents,r.project_id]),[['excess',381,a]]);
+ assert.equal((await f.db.one("SELECT SUM(cents) n FROM cash_entries WHERE category='printing'")).n,500);
+ assert.match(f.sent.filter(m=>m.to==='family:1').at(-1).text,/Crédito da família para o próximo pedido: R\$\s3,81/);
+ // Quote shows the credit; the next order (R$ 12,00) uses R$ 3,81 and the PIX is for R$ 8,19.
+ assert.equal((await f.call(u.ana,'/api/schedule/quote',f.booking({minutes:30}))).credit,381);
+ f.advance(60);const b=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-10',9).toISOString(),minutes:60}))).id;
+ await print(b,60,100);await paid(b,2);assert.deepEqual(amounts,[500,819]);
+ assert.equal(await f.billing.creditBalance(1),0);assert.equal((await f.project(b)).paid,1);
+ assert.match((await f.db.all('SELECT text FROM events WHERE project_id=? ORDER BY id',b)).map(e=>e.text).join('|'),/Crédito da família abatido: R\$\s3,81/);
+ // A credit that covers the whole order: no PIX at all.
+ await f.db.run("INSERT INTO family_credits(id,family_id,project_id,kind,cents,reason,created) VALUES('manual',1,NULL,'adjust',2000,'teste','2026-11-09')");
+ f.advance(60);const c=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-11',9).toISOString(),minutes:20,filaments:[{material:'PLA',color:'Azul',grams:20}]}))).id;
+ const before=f.charges();await print(c,20,20);assert.equal(f.charges(),before);assert.equal((await f.project(c)).paid,1);
+ assert.equal(await f.billing.creditBalance(1),2000-240);assert.ok(f.sent.some(m=>m.to==='family:1'&&/foi pago com o crédito da família/.test(m.text)));
+ // A cancelled order already paid becomes credit too.
+ f.advance(60);const d=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-12',9).toISOString()}))).id;
+ await f.db.run('UPDATE schedule_settings SET value=? WHERE id=1',JSON.stringify({chargeWhen:'validation'}));
+ await f.call(u.admin,`/api/schedule/bookings/${d}/validate`,{});await f.schedule.tick();
+ const due=(await f.db.one("SELECT amount_cents FROM billing_contracts WHERE project_id=? AND status='pending'",d)).amount_cents;await paid(d,3);
+ const balance=await f.billing.creditBalance(1),p=await f.project(d);
+ await f.db.transaction(async()=>{await f.db.run("UPDATE projects SET status='cancelled',included=0,charge=0 WHERE id=?",d);await f.schedule.onCancelled(p,u.admin);});
+ assert.equal(await f.billing.creditBalance(1),balance+due+(2000-240-balance));
+ assert.ok(f.sent.some(m=>m.to==='family:1'&&/ficou de crédito e é abatido no próximo pedido/.test(m.text)));
 });

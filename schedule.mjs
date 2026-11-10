@@ -107,12 +107,14 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   grams=Math.round(grams*10)/10;
   return {rows,grams,rate:Math.round(cost/grams),material:[...new Set(rows.map(r=>r.material))].join(' + ').slice(0,80),color:rows[0].color};
  }
- const received=async id=>Number((await one("SELECT COALESCE(SUM(cents),0) n FROM cash_entries WHERE voided_at IS NULL AND (source_key=? OR source_key LIKE ?)",'project:'+id,'project:'+id+':part:%')).n);
+ // Money received for the order plus family credit already applied to it.
+ const received=id=>billing.projectReceived(id);
  async function estimate(u,b,project=null){
   const cfg=await config(),f=readFilaments(b,cfg),minutes=integer(b.minutes,'Tempo de impressão',1,10000),fid=project?.family_id??u.family_id;
   const bal=fid?await quota.balance(fid):{available:0},back=project&&['queued','printing'].includes(project.status)&&project.period===period()?project.included:0;
   const a=allocation(minutes,bal.available+back,cfg.extra),materialCost=Math.round(f.grams*f.rate/1000);
-  return {minutes,grams:f.grams,included:a.included,extra:a.extra,extraCost:a.extraCost,materialCost,total:a.extraCost+materialCost,available:bal.available+back,extraRate:cfg.extra};
+  const credit=fid?await billing.creditBalance(fid):0;
+  return {minutes,grams:f.grams,included:a.included,extra:a.extra,extraCost:a.extraCost,materialCost,total:a.extraCost+materialCost,available:bal.available+back,extraRate:cfg.extra,credit};
  }
  // Reserves the family's free minutes for a project in 'approval' and puts it in the queue.
  async function reserveNow(p){
@@ -199,7 +201,8 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   if(got>0)await run('UPDATE projects SET paid=? WHERE id=?',got>=done.charge?1:0,p.id);
   const due=Math.max(0,done.charge-got),pay=due>0?`Valor a pagar: ${money(due)}${got?` (já recebemos ${money(got)})`:''}. O link do PIX chega em seguida.`:done.charge>0?'Está tudo pago. Obrigado!':'Não há valor adicional a pagar.';
   await tellFamily(p.family_id,`Olá, {nome}! A peça do pedido ${number(p.id)} "${p.name}" está pronta. 🎉\nRetire na ${cfg.pickupPlace}, de ${cfg.open} às ${cfg.close}.\nConsumo real: ${span(done.actual_minutes)} de impressão e ${done.actual_grams} g de filamento.\n${pay}\nDetalhes: ${link(p.id)}`,u.id);
-  if(got>done.charge)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" terminou custando ${money(done.charge)}, mas a família já pagou ${money(got)}. Combine a devolução de ${money(got-done.charge)}.`,u.id);
+  const credit=await billing.settleCredit(p.id);
+  if(credit>0){await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" custou ${money(done.charge)} e vocês já tinham pago ${money(got)}. A diferença de ${money(credit)} ficou de crédito e é abatida no próximo pedido.`,u.id);await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" terminou custando menos do que foi pago. ${money(credit)} ficaram de crédito para a família.`,u.id);}
   await consumeStock(done,s,u,cfg,'done');
  }
  // The filament used leaves the stock lots (oldest first), split across the order's filaments in the booked proportion.
@@ -231,7 +234,8 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   await run('DELETE FROM print_slots WHERE project_id=?',p.id);
   if(canOperate(u))await tellFamily(p.family_id,`Olá, {nome}! ${text} Veja os detalhes no portal: ${link(p.id)}`,u.id);
   else await tellTeam(`Clube Maker 3D: a família cancelou o pedido ${number(p.id)} "${p.name}" (${when(s.starts_at)}). O horário voltou a ficar livre.`,u.id);
-  if(got>0)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" foi encerrado com ${money(got)} já recebidos. Combine a devolução com a família.`,u.id);
+  const credit=got>0?await billing.settleCredit(p.id):0;
+  if(credit>0){await tellFamily(p.family_id,`Olá, {nome}! O que já foi pago pelo pedido ${number(p.id)} "${p.name}" (${money(credit)}) ficou de crédito e é abatido no próximo pedido. Se preferir a devolução, fale com a equipe.`,u.id);await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" foi encerrado com ${money(got)} já recebidos; ${money(credit)} viraram crédito da família.`,u.id);}
  }
  // A failed print still spent filament: what the team weighed leaves the stock before the slot is released.
  const onFailed=async(p,u,reason,grams=0)=>{if(grams>0)await consumeStock({...p,actual_grams:grams},await slotOf(p.id),u,await settings(),'fail-'+clock().getTime());return release(p,u,`A impressão do pedido ${number(p.id)} "${p.name}" foi interrompida: ${reason}. Não haverá cobrança e as horas voltaram para a cota. A equipe vai preparar uma nova tentativa.`)};
@@ -363,30 +367,36 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const rows=await db.withRequest(()=>all("SELECT p.*,s.charged_cents,s.validated_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.charge>0 AND s.charge_error IS NULL AND p.status IN ('queued','printing','ready','completed') ORDER BY p.id"));
   for(const p of rows){try{
    if(['queued','printing'].includes(p.status)&&!(cfg.chargeWhen==='validation'&&p.validated_at))continue;
-   const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)})),due=p.charge-state.got;
+   const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)}));let due=p.charge-state.got;
+   // Below the gateway minimum the PIX is issued at the minimum; the difference becomes family credit when paid.
+   const expected=d=>billing.automatic?Math.max(d,cfg.minCharge):d;
    let g=null;const actor=async()=>{g=g||await primary(p.family_id);return g?{id:g.id,name:g.name,email:g.email,role:'guardian',family_id:p.family_id}:null;};
    if(state.pending){
     const c=state.pending;
-    if(c.status==='pending'&&c.amount_cents!==due&&c.request_key.startsWith('agenda:')){
+    if(c.status==='pending'&&c.amount_cents!==expected(due)&&c.request_key.startsWith('agenda:')){
      // The cost changed after the PIX was issued: the old charge is cancelled and a new one follows.
      const who=await actor();if(!who)continue;
      try{await billing.cancel(c.id,who);await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',state.got,stamp(),p.id));}catch{await chargeFailed(p,'Não foi possível cancelar a cobrança anterior, de outro valor.');}
-    }else if(p.charged_cents<p.charge&&c.amount_cents===due)await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));
+    }else if(p.charged_cents<p.charge&&c.amount_cents===expected(due))await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));
     continue;
    }
    if(due<=0){if(!p.paid)await db.transaction(()=>run('UPDATE projects SET paid=1 WHERE id=?',p.id));continue;}
    if(p.charged_cents>=p.charge)continue;
-   if(!billing.automatic||due<cfg.minCharge){
-    // No link when the gateway is off or the amount is below what it accepts: the family pays at pickup
-    // (cash or the club's PIX) and the team registers it with "Registrar pagamento" on the order.
-    const small=billing.automatic,why=small?` O valor é menor que o mínimo para gerar PIX automático (${money(cfg.minCharge)}).`:'';
-    await db.transaction(async()=>{await run('UPDATE print_slots SET charged_cents=?,charge_error=NULL,updated=? WHERE project_id=?',p.charge,stamp(),p.id);
-     await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" tem ${money(due)} a pagar.${why} Pague na retirada, em dinheiro ou PIX para a Emersol. Detalhes: ${link(p.id)}`);
-     if(small)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" tem ${money(due)} a receber, abaixo do mínimo de ${money(cfg.minCharge)} para PIX automático. Receba na retirada e use "Registrar pagamento" no pedido: ${link(p.id)}`);});continue;
+   // Family credit (a previous minimum PIX, a cheaper final cost, a cancelled paid order) is used before any new charge.
+   const used=await db.transaction(async()=>{const balance=await billing.creditBalance(p.family_id),use=Math.min(balance,due);if(use<=0)return null;
+    await run("INSERT INTO family_credits(id,family_id,project_id,kind,cents,reason,created) VALUES(?,?,?,'use',?,?,?)",randomUUID(),p.family_id,p.id,-use,`Abatido no pedido ${number(p.id)}`,stamp());
+    await event(p.id,`Crédito da família abatido: ${money(use)}.`);
+    if(use>=due){await run('UPDATE projects SET paid=1 WHERE id=?',p.id);await run('UPDATE print_slots SET charged_cents=?,charge_error=NULL,updated=? WHERE project_id=?',p.charge,stamp(),p.id);
+     await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" (${money(due)}) foi pago com o crédito da família. ${balance-use>0?`Ainda restam ${money(balance-use)} de crédito.`:'O crédito foi todo usado.'} Detalhes: ${link(p.id)}`);}
+    return {use,balance};});
+   if(used){due-=used.use;if(due<=0)continue;}
+   if(!billing.automatic){
+    // Without the payment gateway there is no link: the family is told the amount and the team registers the receipt.
+    await db.transaction(async()=>{await run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id);await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" tem ${money(due)} a pagar.${used?` Já descontamos ${money(used.use)} de crédito.`:''} Pague por PIX para a equipe ou na retirada. Detalhes: ${link(p.id)}`);});continue;
    }
    const who=await actor();if(!who){await chargeFailed(p,'A família não tem responsável principal.');continue;}
    if(!Number(g.billing_enabled)){await chargeFailed(p,'A cobrança automática está desativada para esta família.');continue;}
-   try{await billing.create({familyId:p.family_id,projectId:p.id,purpose:'project',method:'pix_cash',requestKey:`agenda:${p.id}:${state.count+1}`,customer:{name:g.name,email:g.email,document:g.document,phone:g.whatsapp||''}},who);}
+   try{await billing.create({familyId:p.family_id,projectId:p.id,purpose:'project',method:'pix_cash',requestKey:`agenda:${p.id}:${state.count+1}`,customer:{name:g.name,email:g.email,document:g.document,phone:g.whatsapp||''}},who,{minimumCents:cfg.minCharge});}
    // The gateway's own reason (already stripped of secrets) tells the team what to fix; an unconfirmed answer is never retried blindly.
    catch(e){await chargeFailed(p,e.uncertain?'A resposta do Asaas não foi confirmada. Confira a tela Cobranças antes de tentar de novo.':`O Asaas recusou: ${String(e.message||'motivo não informado').slice(0,300)}`);continue;}
    await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));
@@ -407,7 +417,8 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const c=await db.withRequest(()=>one('SELECT b.*,f.name family_name,p.name project_name FROM billing_contracts b JOIN families f ON f.id=b.family_id LEFT JOIN projects p ON p.id=b.project_id WHERE b.id=?',e.externalReference));if(!c)return;
   const what=c.project_id?`do pedido ${number(c.project_id)} "${c.project_name}"`:(c.plan==='annual'?'da anuidade':'da mensalidade');
   await db.transaction(async()=>{
-   await tellFamily(c.family_id,`Olá, {nome}! Recebemos o pagamento ${what}: ${money(e.amountCents)}. Obrigado! 💚\nEquipe Clube Maker 3D`);
+   const credit=await billing.creditBalance(c.family_id);
+   await tellFamily(c.family_id,`Olá, {nome}! Recebemos o pagamento ${what}: ${money(e.amountCents)}. Obrigado! 💚${credit>0?`\nCrédito da família para o próximo pedido: ${money(credit)}.`:''}\nEquipe Clube Maker 3D`);
    await tellTeam(`Clube Maker 3D: pagamento recebido de ${c.family_name}, ${what}: ${money(e.amountCents)}. Baixa e lançamento no caixa feitos automaticamente.`);
   });
  }

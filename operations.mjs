@@ -23,7 +23,7 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
  }
  async function recordProject(p,u){
   need(canFinance(u));if(await one("SELECT id FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id))fail('Este projeto tem cobrança em andamento. Use a tela Cobranças para confirmar ou cancelar.',409);if(p.paid)fail('O pagamento deste projeto já foi registrado.',409);
-  const got=Number((await one("SELECT COALESCE(SUM(cents),0) n FROM cash_entries WHERE voided_at IS NULL AND (source_key=? OR source_key LIKE ?)",'project:'+p.id,'project:'+p.id+':part:%')).n),taken=await one('SELECT id FROM cash_entries WHERE source_key=?','project:'+p.id);if(got>=p.charge)fail('O pagamento deste projeto já foi registrado.',409);
+  const got=Number((await one("SELECT COALESCE((SELECT SUM(cents) FROM cash_entries WHERE voided_at IS NULL AND (source_key=? OR source_key LIKE ?)),0)+COALESCE((SELECT -SUM(cents) FROM family_credits WHERE project_id=? AND kind='use'),0) n",'project:'+p.id,'project:'+p.id+':part:%',p.id)).n),taken=await one('SELECT id FROM cash_entries WHERE source_key=?','project:'+p.id);if(got>=p.charge)fail('O pagamento deste projeto já foi registrado.',409);
   await addEntry({familyId:p.family_id,kind:'income',category:'printing',description:'Impressão: '+p.name,cents:p.charge-got,sourceKey:'project:'+p.id+(taken?':part:manual-'+Date.now():''),createdBy:u.id});
   await audit(u,'finance.project.received',p.id);
  }

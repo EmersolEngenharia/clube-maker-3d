@@ -1,0 +1,10 @@
+SET search_path = maker3d, pg_catalog;
+CREATE TABLE IF NOT EXISTS family_credits(id TEXT PRIMARY KEY,family_id INTEGER NOT NULL REFERENCES families(id),project_id INTEGER REFERENCES projects(id),kind TEXT NOT NULL CHECK(kind IN ('excess','use','adjust')),cents INTEGER NOT NULL CHECK(cents<>0),reason TEXT NOT NULL,created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS maker_credits_family ON family_credits(family_id,created);
+CREATE INDEX IF NOT EXISTS maker_credits_project ON family_credits(project_id,kind);
+ALTER TABLE family_credits ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS maker3d_backend ON family_credits;
+CREATE POLICY maker3d_backend ON family_credits TO maker3d_app USING (true) WITH CHECK (true);
+GRANT SELECT, INSERT, UPDATE, DELETE ON family_credits TO maker3d_app;
+REVOKE ALL ON family_credits FROM PUBLIC, anon, authenticated;
+RESET search_path;

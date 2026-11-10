@@ -115,3 +115,16 @@ abertos por família, lembrete de retirada, local de retirada e WhatsApp da equi
 - O primeiro rascunho (`db/regulamento-proposta.md`) é montado com os valores atuais do clube e
   **precisa ser revisado pela administração antes de publicar**.
 - Migração: `db/terms-postgres.sql` (`supabase/migrations/20261110180000_maker3d_terms.sql`).
+
+## Valor mínimo do PIX e crédito da família (desde 10/11/2026)
+
+- Antes de gerar um PIX, o portal abate o **crédito da família**. Se o crédito cobrir tudo, o pedido
+  fica pago sem PIX e a família é avisada.
+- Se o que falta for menor que o **valor mínimo do PIX** (Regras da agenda, padrão R$ 5,00), o PIX sai
+  com o valor mínimo e a mensagem explica que a diferença fica de crédito.
+- Viram crédito, sozinhos: o que for pago além do custo (PIX mínimo, custo final menor que o pago
+  antes) e o que já tinha sido pago em pedido cancelado ou com falha. A família recebe o aviso; se
+  preferir devolução, combina com a equipe.
+- O crédito aparece no valor previsto do agendamento e na mensagem de pagamento recebido.
+- Tabela `family_credits` (entradas e usos, com o pedido de origem). Migração `db/credits-postgres.sql`.
+- Se o Asaas recusar uma cobrança, o pedido e o aviso à equipe mostram o motivo dado por ele.
