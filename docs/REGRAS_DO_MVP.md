@@ -106,3 +106,13 @@ da equipe. Alterações removem a autorização anterior. O estado aprovado sign
 que o conteúdo está preparado para divulgação: o portal não publica nas redes.
 Fotos, vídeos e perfis permanecem privados, acessíveis apenas aos usuários
 expressamente autorizados nas rotas do backend.
+
+
+## Atualização 0.8.0: agenda da impressora
+
+A ordem da fila (item 5) passa a ser a da agenda: cada pedido aprovado tem um
+horário, e a equipe pode reagendar com aviso à família. Em agendamentos feitos
+pela própria família, o item 3 muda: vale o consumo real registrado ao concluir,
+não um teto. Orçamentos preparados pela equipe mantêm o teto. O pagamento pode ser
+recebido automaticamente por PIX (item 3, último parágrafo). Detalhes em
+[AGENDA.md](AGENDA.md).

@@ -23,7 +23,8 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
  }
  async function recordProject(p,u){
   need(canFinance(u));if(await one("SELECT id FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id))fail('Este projeto tem cobrança em andamento. Use a tela Cobranças para confirmar ou cancelar.',409);if(p.paid)fail('O pagamento deste projeto já foi registrado.',409);
-  await addEntry({familyId:p.family_id,kind:'income',category:'printing',description:'Impressão: '+p.name,cents:p.charge,sourceKey:'project:'+p.id,createdBy:u.id});
+  const got=Number((await one("SELECT COALESCE(SUM(cents),0) n FROM cash_entries WHERE voided_at IS NULL AND (source_key=? OR source_key LIKE ?)",'project:'+p.id,'project:'+p.id+':part:%')).n),taken=await one('SELECT id FROM cash_entries WHERE source_key=?','project:'+p.id);if(got>=p.charge)fail('O pagamento deste projeto já foi registrado.',409);
+  await addEntry({familyId:p.family_id,kind:'income',category:'printing',description:'Impressão: '+p.name,cents:p.charge-got,sourceKey:'project:'+p.id+(taken?':part:manual-'+Date.now():''),createdBy:u.id});
   await audit(u,'finance.project.received',p.id);
  }
  async function getBenefits(fid){
@@ -141,7 +142,7 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const receipt=await one('SELECT * FROM billing_receipts WHERE entry_id=?',e.id);if(receipt?.gateway==='asaas')fail('Estorne o pagamento no painel do Asaas. O webhook atualizará o financeiro e a vigência.',409);
    const stock=await one('SELECT s.id FROM stock_lots s WHERE s.entry_id=?',e.id);if(stock&&await one('SELECT id FROM stock_uses WHERE lot_id=?',stock.id))fail('Este filamento já teve baixa. Registre um ajuste financeiro separado para preservar o estoque.');
    const b=await body(req);await run('UPDATE cash_entries SET voided_at=?,void_reason=? WHERE id=?',now(),str(b.reason,'Motivo do estorno',200),e.id);
-   if(e.source_key?.startsWith('project:')){await run('UPDATE projects SET paid=0 WHERE id=?',Number(e.source_key.slice(8)));await run('UPDATE cash_entries SET source_key=? WHERE id=?',e.source_key+':void:'+e.id,e.id);}
+   if(e.source_key?.startsWith('project:')){await run('UPDATE projects SET paid=0 WHERE id=?',parseInt(e.source_key.slice(8),10));await run('UPDATE cash_entries SET source_key=? WHERE id=?',e.source_key+':void:'+e.id,e.id);}
    if(receipt){await run("UPDATE billing_receipts SET status='refunded',updated=? WHERE entry_id=?",now(),e.id);const paid=await one("SELECT MAX(entitlement_end) ending FROM billing_receipts WHERE contract_id=? AND status='paid'",receipt.contract_id);await run("UPDATE billing_contracts SET status=CASE WHEN status='cancelled' THEN status ELSE ? END,current_period_end=?,updated=? WHERE id=?",paid?.ending?'active':'refunded',paid?.ending||null,now(),receipt.contract_id);}
    await audit(u,'finance.entry.void',e.id);json(res,{ok:true});return true;
   }

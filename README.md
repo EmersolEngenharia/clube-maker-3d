@@ -1,8 +1,18 @@
 # Clube Maker 3D
 
-Portal do clube da Emersol, em Itumbiara–GO — versão 0.7.0.
+Portal do clube da Emersol, em Itumbiara–GO — versão 0.8.0.
 Interface em português, adaptada para computador e celular, com foco em crianças,
 famílias e adultos iniciantes.
+
+## Atualização 0.8.0 — agenda da impressora
+
+Calendário com horários livres e ocupados (de outras famílias aparece só
+"Ocupado"), agendamento feito pela própria família com leitura de tempo e peso do
+arquivo fatiado, validação e edição pela equipe com aviso no WhatsApp, cota
+contabilizada na hora, PIX automático pelo Asaas com baixa pelo webhook, aviso de
+retirada e estado ao vivo da impressora por uma ponte na rede local.
+[Como funciona](docs/AGENDA.md) · [Impressora ao vivo](docs/IMPRESSORA.md).
+**Ainda não publicada**: exige aplicar `db/schedule-postgres.sql` antes.
 
 ## Atualização 0.7.0 — WhatsApp financeiro
 

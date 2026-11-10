@@ -24,8 +24,8 @@ export function createBroadcasts({db,storage,env=process.env,evolution,clock=()=
  async function overview(u){await need(u);
   const d=await db.withRequest(()=>db.snapshot({
    people:{sql:recipientsSQL},
-   broadcasts:{sql:'SELECT b.id,b.body,b.audience,b.media_name,b.media_kind,b.created,u.name author FROM broadcasts b JOIN users u ON u.id=b.author_id ORDER BY b.created DESC LIMIT 20'},
-   deliveries:{sql:'SELECT d.id,d.broadcast_id,d.status,d.last_error,d.updated,u.name,f.name family FROM broadcast_deliveries d JOIN users u ON u.id=d.user_id LEFT JOIN families f ON f.id=d.family_id WHERE d.broadcast_id IN (SELECT id FROM broadcasts ORDER BY created DESC LIMIT 20) ORDER BY f.name,u.name'}
+   broadcasts:{sql:'SELECT b.id,b.body,b.audience,b.media_name,b.media_kind,b.created,u.name author FROM broadcasts b JOIN users u ON u.id=b.author_id ORDER BY b.created DESC LIMIT 60'},
+   deliveries:{sql:'SELECT d.id,d.broadcast_id,d.status,d.last_error,d.updated,u.name,f.name family FROM broadcast_deliveries d JOIN users u ON u.id=d.user_id LEFT JOIN families f ON f.id=d.family_id WHERE d.broadcast_id IN (SELECT id FROM broadcasts ORDER BY created DESC LIMIT 60) ORDER BY f.name,u.name'}
   }));
   const recipients=d.people.map(p=>({id:p.id,name:p.name,familyId:p.family_id,family:p.family,primary:Boolean(Number(p.is_primary)),whatsappEnding:whatsappNumber(p.whatsapp)?.slice(-4)||null}));
   const history=d.broadcasts.map(b=>{const list=d.deliveries.filter(x=>x.broadcast_id===b.id).map(({broadcast_id,...x})=>x);return {...b,counts:Object.fromEntries(statusOrder.map(s=>[s,list.filter(x=>x.status===s).length])),deliveries:list};});
@@ -65,6 +65,19 @@ export function createBroadcasts({db,storage,env=process.env,evolution,clock=()=
   });
   return {queued:1};
  }
+ // Automatic notices for the team (new bookings, payments, printer events): every team member with a WhatsApp
+ // on file, plus the extra numbers set in the calendar settings. Each number gets its own entry in this queue.
+ async function notifyTeam({authorId,text,numbers=[]}){
+  const members=await db.withRequest(()=>db.all("SELECT u.id,u.family_id,c.whatsapp FROM users u JOIN guardian_contacts c ON c.user_id=u.id LEFT JOIN team_members t ON t.user_id=u.id WHERE u.role='admin' OR t.user_id IS NOT NULL ORDER BY u.id"));
+  const targets=new Map();
+  for(const m of members){const n=whatsappNumber(m.whatsapp);if(n&&!targets.has(n))targets.set(n,{userId:m.id,familyId:m.family_id});}
+  for(const raw of numbers){const n=whatsappNumber(raw);if(n&&!targets.has(n))targets.set(n,{userId:authorId,familyId:null});}
+  if(!targets.size)return {queued:0};
+  await db.transaction(async()=>{for(const [number,t] of targets){const id=randomUUID();
+   await db.run('INSERT INTO broadcasts(id,author_id,body,audience,created) VALUES(?,?,?,?,?)',id,authorId,text.replaceAll('{nome}','equipe'),'selected',stamp());
+   await db.run('INSERT INTO broadcast_deliveries(id,broadcast_id,user_id,family_id,whatsapp,available_at,created,updated) VALUES(?,?,?,?,?,?,?,?)',randomUUID(),id,t.userId,t.familyId,number,stamp(),stamp(),stamp());}});
+  return {queued:targets.size};
+ }
  async function retry(u,id,confirmed){await need(u);if(confirmed!==true)fail('Confirme que verificou o envio na Evolution.');
   await db.transaction(async()=>{const j=await db.one('SELECT status FROM broadcast_deliveries WHERE id=?',String(id));if(!j||!['failed','needs_review'].includes(j.status))fail('Mensagem indisponível para nova tentativa.');await db.run("UPDATE broadcast_deliveries SET status='pending',available_at=?,last_error=NULL,updated=? WHERE id=?",stamp(),stamp(),String(id));await db.run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'broadcast.retry',String(id),stamp());});return {ok:true};}
  async function cancel(u,id){await need(u);const r=await db.transaction(async()=>{const r=await db.run("UPDATE broadcast_deliveries SET status='cancelled',updated=? WHERE broadcast_id=? AND status='pending'",stamp(),String(id));await db.run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'broadcast.cancel',String(id),stamp());return r;});return {cancelled:Number(r.changes)||0};}
@@ -85,5 +98,5 @@ export function createBroadcasts({db,storage,env=process.env,evolution,clock=()=
    catch(e){await db.transaction(()=>db.run('UPDATE broadcast_deliveries SET status=?,last_error=?,updated=? WHERE id=?',e.uncertain?'needs_review':'failed',e.uncertain?'Envio não confirmado. Confira a Evolution antes de reenviar.':'Envio recusado. Confira o contato, o arquivo e a instância.',stamp(),job.id));}
   }
  }finally{running=false;}}
- return {owner,overview,create,notifyFamily,retry,cancel,tick,enabled};
+ return {owner,overview,create,notifyFamily,notifyTeam,retry,cancel,tick,enabled};
 }

@@ -66,11 +66,15 @@ export function createAutomation({db,billing,asaas,env=process.env,evolution,clo
  return {families,outbox:d.outbox,enabled:enabled(),canManage:all};}
  async function deliver(job){const context=await db.withRequest(async()=>({a:await db.one('SELECT * FROM family_automation WHERE family_id=?',job.family_id),g:await recipient(job.family_id)}));const {a,g}=context;if(!a||!g||!whatsappNumber(g.whatsapp))return {skip:'Responsável principal sem WhatsApp válido.'};
  if(job.kind==='report'){if(!a.reports_enabled)return {cancel:true};return {number:g.whatsapp,text:(await db.withRequest(()=>familyReport(db,job.family_id,job.report_period))).text};}
- if(!a.billing_enabled||a.special_condition||await db.withRequest(()=>special(job.family_id)))return {cancel:true};
+ if(!a.billing_enabled)return {cancel:true};
+ // A print charge is not a membership: discounts and special conditions of the plan do not hold its link back.
+ const project=job.contract_id?await db.withRequest(()=>db.one("SELECT p.id,p.name,p.actual_minutes,p.minutes,p.actual_grams,p.grams,p.material FROM billing_contracts b JOIN projects p ON p.id=b.project_id WHERE b.id=? AND b.purpose='project'",job.contract_id)):null;
+ if(!project&&(a.special_condition||await db.withRequest(()=>special(job.family_id))))return {cancel:true};
  if(job.kind==='renewal')return {number:g.whatsapp,text:`Olá, ${g.name}! O período anual da sua família terminou. Escolha novamente o plano mensal de R$ 150 no PIX ou anual de R$ 1.500 no cartão em até 12x pelo portal: ${env.PUBLIC_ORIGIN||'https://maker3d.emersol.ai'}/\nEquipe Financeiro`};
  const c=await db.withRequest(()=>db.one('SELECT * FROM billing_contracts WHERE id=?',job.contract_id));if(!c||['cancelled','refunded'].includes(c.status))return {cancel:true};
  const p=await asaas.call('/payments/'+encodeURIComponent(job.charge_id));if(p.externalReference!==c.id||!['PENDING','OVERDUE'].includes(p.status))return {cancel:true};const url=checkoutURL(p.invoiceUrl);if(!url)return {skip:'Link de pagamento ainda indisponível.'};
  const label=job.kind==='overdue'?'Lembrete: sua cobrança venceu ontem. Se já pagou, aguarde a confirmação.':'Seu link de pagamento está disponível.';
+ if(project){const m=project.actual_minutes??project.minutes,h=Math.floor(m/60);return {number:g.whatsapp,text:`Olá, ${g.name}! ${label}\nImpressão #${String(project.id).padStart(3,'0')} "${project.name}" no Clube Maker 3D: ${money(c.amount_cents)}.\n${h?h+' h ':''}${m%60} min de impressão · ${project.actual_grams??project.grams} g de ${project.material}.\nVencimento: ${p.dueDate.split('-').reverse().join('/')}.\nPague por PIX com segurança pelo Asaas: ${url}\nAssim que o pagamento cair, a baixa é automática.\nEquipe Financeiro`};}
  return {number:g.whatsapp,text:`Olá, ${g.name}! ${label}\n${c.plan==='monthly'?'Mensalidade':'Plano anual'} do Clube Maker 3D: ${money(c.amount_cents)}${c.method==='card_installments'?` em ${c.installments}x sem juros`:''}.\nVencimento: ${p.dueDate.split('-').reverse().join('/')}.\nPague com segurança pelo Asaas: ${url}\nEquipe Financeiro`};
  }
  async function tick(){if(running||!enabled())return;running=true;try{

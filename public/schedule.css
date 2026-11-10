@@ -1,0 +1,47 @@
+/* Agenda da impressora */
+.calendar-wrap{overflow-x:auto;margin:6px -4px 0}
+.calendar{display:block;width:100%;min-width:320px;height:auto;font-family:inherit}
+.calendar .cal-col{fill:#f3f5f8;stroke:var(--border);stroke-width:1}
+.calendar .cal-open{fill:var(--paper)}
+.calendar .cal-past{fill:#8793a5;opacity:.16;pointer-events:none}
+.calendar .cal-line{stroke:var(--border);stroke-width:.6;pointer-events:none}
+.calendar .cal-now{stroke:var(--orange);stroke-width:2;pointer-events:none}
+.calendar .cal-hour{font-size:9px;fill:var(--muted)}
+.calendar .cal-day{font-size:11px;font-weight:600;fill:var(--muted);text-transform:capitalize}
+.calendar .cal-day.today{fill:var(--green)}
+.calendar .cal-hit{fill:transparent;cursor:copy}
+.calendar .cal-busy{fill:#aab4c3}
+.calendar .cal-own{fill:var(--green)}
+.calendar .cal-team{fill:#4a6c9d}
+.calendar .cal-pending{fill-opacity:.55;stroke:var(--orange);stroke-width:1.5;stroke-dasharray:4 3}
+.calendar .cal-printing{stroke:var(--orange);stroke-width:2}
+.calendar .cal-done{fill-opacity:.35}
+.calendar .cal-block{fill:#e9c9c0}
+.calendar .cal-text{font-size:9px;fill:#fff;pointer-events:none}
+.calendar .cal-block+.cal-text,.calendar .cal-done+.cal-text,.calendar .cal-busy+.cal-text{fill:#253246}
+.calendar .cal-slot{cursor:pointer}
+.calendar .cal-slot:focus{outline:2px solid var(--orange);outline-offset:1px}
+.calendar-head{margin-bottom:8px}
+.calendar-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin:12px 0 4px;font-size:12px;color:var(--muted)}
+.calendar-legend .lg::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;border:1px solid var(--border)}
+.lg.open::before{background:var(--paper)}.lg.busy::before{background:#aab4c3}.lg.own::before{background:var(--green)}.lg.team::before{background:#4a6c9d}.lg.pending::before{background:var(--paper);border:1.5px dashed var(--orange)}.lg.block::before{background:#e9c9c0}
+.booking-row{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--border)}
+.booking-row:last-child{border-bottom:0}
+.booking-row h3{margin:0 0 4px;font-size:15px}
+.booking-row p{margin:2px 0;font-size:13px}
+.booking-row p .icon{width:14px;height:14px;vertical-align:-2px}
+.error-inline{color:#a2402c;font-size:13px}
+.card.attention{border-color:var(--orange)}
+.filament-row{display:grid;grid-template-columns:1fr 1fr 110px 40px;gap:10px;align-items:end;margin-bottom:10px}
+.field-title{display:block;font-size:13px;margin-bottom:8px}
+.booking-suggestions .filters{margin-bottom:0}
+.booking-suggestions button.selected{background:var(--green);color:#fff;border-color:var(--green)}
+.printer-card progress{width:100%;height:14px;margin-top:10px}
+.printer-card h2{margin:4px 0 0}
+.printer-numbers{margin:8px 0 0;font-size:14px}
+.printer-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#aab4c3;margin-right:8px}
+.printer-card.printing .printer-dot{background:#2e9d5b}.printer-card.paused .printer-dot,.printer-card.finished .printer-dot{background:var(--orange)}.printer-card.failed .printer-dot{background:#c2452d}.printer-card.idle .printer-dot{background:var(--green)}
+.printer-live{display:block;width:100%;max-width:640px;height:auto;border-radius:12px;margin-top:12px;background:#111}
+.schedule-card h2{margin:6px 0}.schedule-card h2 small{font-weight:400;font-size:14px;color:var(--muted)}
+.row.wrap{flex-wrap:wrap}
+@media(max-width:760px){.filament-row{grid-template-columns:1fr 1fr}.booking-row{align-items:flex-start}}

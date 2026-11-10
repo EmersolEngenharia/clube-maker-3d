@@ -34,7 +34,7 @@ for i in $(seq 1 12); do code=$(curl -s -o /dev/null -w '%{http_code}' $site/hea
 echo "healthz: $code · http: $(curl -s -o /dev/null -w '%{http_code}' http://maker3d.emersol.ai/)"
 [[ $code == 200 ]] || exit 1
 bad=0
-for f in app.js features.js operations.js billing.js gallery.js pricing.js styles.css brand.css brand-icon.svg; do
+for f in app.js features.js operations.js billing.js gallery.js schedule.js schedule.css pricing.js styles.css brand.css brand-icon.svg; do
   [[ "$(curl -s $site/$f | sha256sum | cut -c1-64)" == "$(git show $sha:public/$f | sha256sum | cut -c1-64)" ]] || { echo "DIFERENTE: $f"; bad=1; }
 done
 (( bad == 0 )) && echo "OK: produção em $short; arquivos servidos iguais ao commit." || exit 1
