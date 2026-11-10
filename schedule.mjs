@@ -7,7 +7,7 @@ import {whatsappNumber} from './messaging/evolution.mjs';
 // Printer calendar. Every approved order holds one time slot; members book their own slot and the team validates it.
 // Times are stored in UTC. The club works in America/Sao_Paulo, which has had a fixed -03:00 offset since 2019.
 const OFFSET=-180,MIN=60000;
-export const scheduleDefaults={open:'08:00',close:'18:00',days:[1,2,3,4,5],buffer:15,lead:60,horizon:30,maxMinutes:2880,maxActive:3,lowStockGrams:200,chargeWhen:'finish',teamWhatsapp:[],pickupDays:3,pickupPlace:'Emersol, em Itumbiara'};
+export const scheduleDefaults={open:'08:00',close:'18:00',days:[1,2,3,4,5],buffer:15,lead:60,horizon:30,maxMinutes:2880,maxActive:3,lowStockGrams:200,minCharge:500,chargeWhen:'finish',teamWhatsapp:[],pickupDays:3,pickupPlace:'Emersol, em Itumbiara'};
 const hm=s=>{const [h,m]=s.split(':').map(Number);return h*60+m;};
 const local=d=>new Date(new Date(d).getTime()+OFFSET*MIN);
 export const fromLocal=(day,minutes=0)=>new Date(Date.parse(day+'T00:00:00Z')+(minutes-OFFSET)*MIN);
@@ -67,7 +67,7 @@ export function cleanSettings(b,fail){
  const numbers=(Array.isArray(b.teamWhatsapp)?b.teamWhatsapp:[]).map(n=>{const v=whatsappNumber(n);if(!v)fail('WhatsApp da equipe inválido: use celular com DDD.');return v;});
  if(numbers.length>5)fail('Informe até cinco números da equipe.');
  const place=typeof b.pickupPlace==='string'&&b.pickupPlace.trim()?b.pickupPlace.trim().slice(0,120):scheduleDefaults.pickupPlace;
- return {open,close,days:[...new Set(b.days)].sort(),buffer:int(b.buffer,'Intervalo entre impressões',0,240),lead:int(b.lead,'Antecedência mínima',0,10080),horizon:int(b.horizon,'Dias de agenda aberta',1,180),maxMinutes:int(b.maxMinutes,'Duração máxima',10,10000),maxActive:int(b.maxActive,'Agendamentos por família',1,20),chargeWhen:b.chargeWhen,teamWhatsapp:[...new Set(numbers)],pickupDays:int(b.pickupDays,'Lembrete de retirada',1,30),lowStockGrams:int(b.lowStockGrams??scheduleDefaults.lowStockGrams,'Aviso de estoque baixo',0,100000),pickupPlace:place};
+ return {open,close,days:[...new Set(b.days)].sort(),buffer:int(b.buffer,'Intervalo entre impressões',0,240),lead:int(b.lead,'Antecedência mínima',0,10080),horizon:int(b.horizon,'Dias de agenda aberta',1,180),maxMinutes:int(b.maxMinutes,'Duração máxima',10,10000),maxActive:int(b.maxActive,'Agendamentos por família',1,20),chargeWhen:b.chargeWhen,teamWhatsapp:[...new Set(numbers)],pickupDays:int(b.pickupDays,'Lembrete de retirada',1,30),lowStockGrams:int(b.lowStockGrams??scheduleDefaults.lowStockGrams,'Aviso de estoque baixo',0,100000),minCharge:int(b.minCharge??scheduleDefaults.minCharge,'Valor mínimo para PIX automático',0,100000),pickupPlace:place};
 }
 const money=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n/100);
 const when=d=>{const p=Object.fromEntries(new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',weekday:'long',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(d)).map(x=>[x.type,x.value]));return `${p.weekday}, ${p.day}/${p.month} às ${p.hour}:${p.minute}`;};
@@ -376,14 +376,19 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    }
    if(due<=0){if(!p.paid)await db.transaction(()=>run('UPDATE projects SET paid=1 WHERE id=?',p.id));continue;}
    if(p.charged_cents>=p.charge)continue;
-   if(!billing.automatic){
-    // Without the payment gateway there is no link: the family is told the amount and the team registers the receipt.
-    await db.transaction(async()=>{await run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id);await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" tem ${money(due)} a pagar (horas além da cota e filamento). Pague por PIX para a equipe ou na retirada. Detalhes: ${link(p.id)}`);});continue;
+   if(!billing.automatic||due<cfg.minCharge){
+    // No link when the gateway is off or the amount is below what it accepts: the family pays at pickup
+    // (cash or the club's PIX) and the team registers it with "Registrar pagamento" on the order.
+    const small=billing.automatic,why=small?` O valor é menor que o mínimo para gerar PIX automático (${money(cfg.minCharge)}).`:'';
+    await db.transaction(async()=>{await run('UPDATE print_slots SET charged_cents=?,charge_error=NULL,updated=? WHERE project_id=?',p.charge,stamp(),p.id);
+     await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" tem ${money(due)} a pagar.${why} Pague na retirada, em dinheiro ou PIX para a Emersol. Detalhes: ${link(p.id)}`);
+     if(small)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" tem ${money(due)} a receber, abaixo do mínimo de ${money(cfg.minCharge)} para PIX automático. Receba na retirada e use "Registrar pagamento" no pedido: ${link(p.id)}`);});continue;
    }
    const who=await actor();if(!who){await chargeFailed(p,'A família não tem responsável principal.');continue;}
    if(!Number(g.billing_enabled)){await chargeFailed(p,'A cobrança automática está desativada para esta família.');continue;}
    try{await billing.create({familyId:p.family_id,projectId:p.id,purpose:'project',method:'pix_cash',requestKey:`agenda:${p.id}:${state.count+1}`,customer:{name:g.name,email:g.email,document:g.document,phone:g.whatsapp||''}},who);}
-   catch(e){await chargeFailed(p,e.status&&e.status<500?e.message:'A emissão falhou. Confira a tela Cobranças antes de tentar de novo.');continue;}
+   // The gateway's own reason (already stripped of secrets) tells the team what to fix; an unconfirmed answer is never retried blindly.
+   catch(e){await chargeFailed(p,e.uncertain?'A resposta do Asaas não foi confirmada. Confira a tela Cobranças antes de tentar de novo.':`O Asaas recusou: ${String(e.message||'motivo não informado').slice(0,300)}`);continue;}
    await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));
   }catch{console.error('Falha ao processar cobrança da agenda.');}}
  }

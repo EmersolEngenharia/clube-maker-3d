@@ -14,6 +14,7 @@ import {mqtt,parsePackets,mergeReport,toStatus,startBridge} from '../scripts/pri
 import {createDatabase} from '../db.mjs';
 import {createQuota} from '../quota.mjs';
 import {createBilling} from '../payments/billing.mjs';
+import {ProviderError} from '../payments/provider.mjs';
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});},str=(v,label,max=500)=>{if(typeof v!=='string'||!v.trim()||v.length>max)fail(label);return v.trim();},integer=(v,label,min,max)=>{if(!Number.isSafeInteger(v)||v<min||v>max)fail(label);return v;},num=(v,label,min,max)=>{if(typeof v!=='number'||!(v>=min&&v<=max))fail(label);return v;};
 const MIN=60000,at=(day,h,m=0)=>fromLocal(day,h*60+m);
 
@@ -75,14 +76,14 @@ test('estado da impressora: token, privacidade da câmera e aviso de término',a
  clockNow+=10*60000;assert.equal((await printer.status(owner)).state,'offline');
 });
 // Service-level fixture: real database, quota and billing; WhatsApp and the gateway are recorded in memory.
-async function fixture(t,{chargeWhen='finish'}={}){
+async function fixture(t,{chargeWhen='finish',createCharge=null}={}){
  const db=await database(t),sent=[];let time=Date.parse('2026-11-09T13:00:00Z'),charges=0,cancels=0;
  await db.transaction(async()=>{await db.run("INSERT INTO users(id,email,name,password,role) VALUES(1,'admin@test.example','Equipe','hash','admin')");for(const [id,name] of [[1,'Família A'],[2,'Família B']])await db.run('INSERT INTO families(id,name,allowance,created) VALUES(?,?,120,?)',id,name,'2026-01-01');
   await db.run("INSERT INTO users(id,email,name,password,role,family_id) VALUES(2,'a@test.example','Ana','hash','guardian',1),(3,'b@test.example','Bia','hash','guardian',2),(4,'c@test.example','Caio','hash','learner',1)");
   for(const [fid,uid] of [[1,2],[2,3]])await db.run("INSERT INTO family_automation(family_id,primary_guardian_id,document,created,updated) VALUES(?,?,'12345678909','2026-01-01','2026-01-01')",fid,uid);
   await db.run('INSERT INTO schedule_settings(id,value) VALUES(1,?)',JSON.stringify({chargeWhen}));});
  const config=async()=>({monthly:15000,annual:150000,extra:600,markup:20,materials:[{name:'PLA',cost:10000,colors:['Azul','Verde'],active:true}]});
- const provider={id:'asaas',createCharge:async input=>({provider:'asaas',gatewayChargeId:'pay_'+(++charges),checkoutUrl:'https://www.asaas.com/i/'+charges,status:'pending',amount:input.amountCents}),cancelCharge:async()=>{cancels++;},cancelSubscription:async()=>{}};
+ const provider={id:'asaas',createCharge:createCharge||(async input=>({provider:'asaas',gatewayChargeId:'pay_'+(++charges),checkoutUrl:'https://www.asaas.com/i/'+charges,status:'pending',amount:input.amountCents})),cancelCharge:async()=>{cancels++;},cancelSubscription:async()=>{}};
  const broadcasts={notifyFamily:async m=>{sent.push({to:'family:'+m.familyId,text:m.text});return {queued:1};},notifyTeam:async m=>{sent.push({to:'team',text:m.text});return {queued:1};},tick:async()=>{}};
  let schedule;const billing=createBilling({db,fail,str,integer,config,provider,env:{ASAAS_ENV:'sandbox'},notify:e=>schedule.onPaid(e)});
  const event=(id,text)=>db.run('INSERT INTO events(project_id,text,created) VALUES(?,?,?)',id,text,new Date(time).toISOString());
@@ -232,4 +233,22 @@ test('impressão interrompida desconta do estoque o filamento gasto, sem cobrar'
  assert.equal((await f.project(id)).charge,0);assert.equal(await f.db.one('SELECT project_id FROM print_slots WHERE project_id=?',id),undefined);
  // A second attempt of the same order can fail again and spend more without colliding with the first record.
  f.advance(1);await f.db.transaction(()=>f.schedule.onFailed(p,u.admin,'de novo',20));assert.equal((await f.db.one('SELECT SUM(grams) n FROM stock_uses')).n,70);
+});
+
+test('valor abaixo do mínimo não vai ao Asaas, e uma recusa mostra o motivo do Asaas à equipe',async t=>{
+ const f=await fixture(t),{users:u}=f;
+ // 30 min within the allowance and 9.9 g of the test filament: R$ 1,19, below the R$ 5,00 minimum.
+ const {id}=await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:30,filaments:[{material:'PLA',color:'Azul',grams:9.9}]}));
+ await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});f.advance(60);await f.start(id);await f.finish(id,30,9.9);
+ await f.schedule.tick();await f.schedule.tick();
+ assert.equal(f.charges(),0);assert.equal((await f.project(id)).charge,119);
+ assert.ok(f.sent.some(m=>m.to==='family:1'&&/R\$\s1,19 a pagar\. O valor é menor que o mínimo para gerar PIX automático \(R\$\s5,00\)\. Pague na retirada/.test(m.text)));
+ assert.ok(f.sent.some(m=>m.to==='team'&&/abaixo do mínimo de R\$\s5,00.*Registrar pagamento/.test(m.text)));
+ assert.equal((await f.db.one('SELECT charge_error FROM print_slots WHERE project_id=?',id)).charge_error,null);
+ // A lower minimum sends it to the gateway; a refusal keeps the gateway's own words.
+ const g=await fixture(t,{createCharge:async()=>{throw new ProviderError('O valor da cobrança deve ser maior que R$ 5,00.',502);}});
+ const b=(await g.call(g.users.ana,'/api/schedule/bookings',g.booking({startsAt:at('2026-11-09',11).toISOString()}))).id;
+ await g.call(g.users.admin,`/api/schedule/bookings/${b}/validate`,{});g.advance(60);await g.start(b);await g.finish(b,180,100);await g.schedule.tick();
+ assert.equal((await g.db.one('SELECT charge_error FROM print_slots WHERE project_id=?',b)).charge_error,'O Asaas recusou: O valor da cobrança deve ser maior que R$ 5,00.');
+ assert.ok(g.sent.some(m=>m.to==='team'&&/O Asaas recusou: O valor da cobrança deve ser maior que R\$ 5,00\./.test(m.text)));
 });
