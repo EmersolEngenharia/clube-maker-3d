@@ -115,9 +115,10 @@ test('agendamento conta na cota, some para as outras famílias e passa por valid
  // The owner may still change it before validation; afterwards only the team can, and the family is told.
  await f.call(u.ana,`/api/schedule/bookings/${id}/update`,{minutes:150});assert.equal((await f.project(id)).charge,1500);
  await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});assert.ok(f.sent.at(-1).to==='family:1'&&/confirmado pela equipe/.test(f.sent.at(-1).text));
+ assert.match(f.sent.at(-1).text,/Valor previsto: R\$\s15,00 \(R\$\s3,00 de horas além da cota \+ R\$\s12,00 de filamento\)/);
  await assert.rejects(f.call(u.ana,`/api/schedule/bookings/${id}/update`,{minutes:100}),/já validou/);await assert.rejects(f.call(u.admin,`/api/schedule/bookings/${id}/update`,{minutes:100}),/Motivo/);
  await f.call(u.admin,`/api/schedule/bookings/${id}/update`,{minutes:240,filaments:[{material:'PLA',color:'Verde',grams:150}],startsAt:at('2026-11-10',9).toISOString(),note:'O fatiamento deu 4 h e 150 g.'});
- p=await f.project(id);assert.deepEqual([p.minutes,p.grams,p.included,p.charge],[240,150,120,3000]);const told=f.sent.at(-1);assert.equal(told.to,'family:1');assert.match(told.text,/tempo: 2 h 30 min → 4 h/);assert.match(told.text,/valor previsto: R\$\s15,00 → R\$\s30,00/);assert.match(told.text,/O fatiamento deu/);
+ p=await f.project(id);assert.deepEqual([p.minutes,p.grams,p.included,p.charge],[240,150,120,3000]);const told=f.sent.at(-1);assert.equal(told.to,'family:1');assert.match(told.text,/tempo: 2 h 30 min → 4 h/);assert.match(told.text,/valor previsto: R\$\s15,00 → R\$\s30,00/);assert.match(told.text,/O fatiamento deu/);assert.match(told.text,/Valor previsto: R\$\s30,00 \(R\$\s12,00 de horas além da cota \+ R\$\s18,00 de filamento\)/);
  // Cancelling frees the slot.
  await f.db.transaction(async()=>{await f.db.run("UPDATE projects SET status='cancelled',included=0,charge=0 WHERE id=?",id);await f.schedule.onCancelled(p,u.ana);});
  assert.equal((await f.call(u.bia,'/api/schedule?from=2026-11-09&days=3')).slots.length,0);assert.ok(/cancelou/.test(f.sent.at(-1).text));

@@ -137,7 +137,13 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  async function tellFamily(familyId,text,by=null){try{const authorId=by??await author();if(!authorId)return;if((await broadcasts.notifyFamily({authorId,familyId,text})).queued)kick();}catch{console.error('Falha ao avisar a família sobre a agenda.');}}
  async function tellTeam(text,by=null){try{const authorId=by??await author();if(!authorId)return;if((await broadcasts.notifyTeam({authorId,text,numbers:(await settings()).teamWhatsapp})).queued)kick();}catch{console.error('Falha ao avisar a equipe sobre a agenda.');}}
  const link=id=>`${origin}/?pedido=${id}`;
- const costLine=p=>p.charge>0?`Valor previsto: ${money(p.charge)} (horas além da cota e filamento).`:'Cabe na cota da família, sem valor adicional previsto.';
+ // Says what the amount is made of: hours beyond the family allowance and/or filament.
+ const costLine=p=>{
+  if(!(p.charge>0))return 'Cabe na cota da família, sem valor adicional previsto.';
+  const extra=Math.max(0,(p.minutes||0)-(p.included||0)),hours=Math.min(p.charge,Math.round(extra*(p.extra_rate||0)/60)),material=p.charge-hours;
+  const parts=[hours>0?`${money(hours)} de horas além da cota`:'',material>0?`${money(material)} de filamento`:''].filter(Boolean);
+  return `Valor previsto: ${money(p.charge)}${p.minutes===undefined?'':hours>0?` (${parts.join(' + ')})`:` (filamento; as horas cabem na cota)`}.`;
+ };
  async function applyReflow(by=null){
   const cfg=await settings(),list=await intervals(),fixed=list.filter(i=>i.block||i.status==='printing'),queued=list.filter(i=>i.id&&i.status!=='printing'),moved=reflow(cfg,fixed,queued);
   for(const m of moved){
@@ -293,7 +299,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   if(f)await run('UPDATE projects SET color=? WHERE id=?',f.color,id);
   const changes=[movedTime?`horário: ${when(s.starts_at)} → ${when(start)}`:'',minutes!==p.minutes?`tempo: ${span(p.minutes)} → ${span(minutes)}`:'',grams!==p.grams?`filamento: ${p.grams} g → ${grams} g`:'',status==='queued'&&charge!==p.charge?`valor previsto: ${money(p.charge)} → ${money(charge)}`:''].filter(Boolean);
   await event(id,`Agendamento alterado por ${team?'equipe':u.name}${changes.length?': '+changes.join('; '):''}.${note?' Motivo: '+note:''}`);
-  if(team)await tellFamily(p.family_id,`Olá, {nome}! A equipe ajustou o agendamento ${number(id)} "${p.name}".\n${changes.length?changes.map(c=>'• '+c).join('\n'):'Os dados foram conferidos.'}\nMotivo: ${note}\nAgora: ${when(start)}, ${span(minutes)}. ${status==='queued'?costLine({charge}):''}\nDetalhes: ${link(id)}`,u.id);
+  if(team)await tellFamily(p.family_id,`Olá, {nome}! A equipe ajustou o agendamento ${number(id)} "${p.name}".\n${changes.length?changes.map(c=>'• '+c).join('\n'):'Os dados foram conferidos.'}\nMotivo: ${note}\nAgora: ${when(start)}, ${span(minutes)}. ${status==='queued'?costLine(await one('SELECT * FROM projects WHERE id=?',id)):''}\nDetalhes: ${link(id)}`,u.id);
   else{if(status==='approval'&&p.status==='queued')await tellFamily(p.family_id,`Olá, {nome}! ${u.name} alterou o agendamento ${number(id)} "${p.name}". Confira e aprove de novo no portal: ${link(id)}`,null);else await tellTeam(`Clube Maker 3D: a família alterou o agendamento ${number(id)} "${p.name}"${changes.length?' ('+changes.join('; ')+')':''}. ${link(id)}`,u.id);}
   return {ok:true};
  }
