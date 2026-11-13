@@ -176,6 +176,11 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   if(had?.self_service&&!had.validated_at)await tellTeam(`Clube Maker 3D: o responsável aprovou o agendamento ${number(p.id)} "${p.name}" para ${when(s.starts_at)} (${span(p.minutes)}). Falta a validação da equipe: ${link(p.id)}`,u.id);
   return s;
  }
+ // Avisa o responsável de que há um orçamento esperando: valor, uso da cota e o link para aprovar.
+ async function onQuoted(p,u,q){
+  const hours=m=>`${Number((m/60).toFixed(1)).toLocaleString('pt-BR')} h`;
+  await tellFamily(p.family_id,`Olá, {nome}! O orçamento do pedido ${number(p.id)} "${p.name}" está pronto. Tempo estimado: ${span(p.minutes)}${q.included?`, usando ${hours(q.included)} da cota do mês`:''}. ${costLine({...p,charge:q.total,included:q.included})} Ao aprovar${q.total>0?', o PIX é gerado e':''} o pedido entra na fila de impressão. Confira e aprove: ${link(p.id)}`,u?.id);
+ }
  async function beforeStart(p){
   const s=await slotOf(p.id);if(!s)return;
   if(!s.validated_at)fail('Valide o agendamento antes de iniciar a impressão.');
@@ -431,5 +436,5 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    }else if(kind==='failed')await tellTeam(`Clube Maker 3D: a impressora parou com erro${p?` durante o pedido ${number(p.id)} "${p.name}"`:''}. Confira a máquina${p?` e registre no portal: ${link(p.id)}`:'.'}`);
   });
  }
- return {route,settings,backfill,ensureSlot,onApproved,beforeStart,onStarted,settle,onFinished,onFailed,onCancelled,projectSlot,tick,onPaid,onManualPaid,onPrinter,useMeasured:fn=>{measured=fn;},printingFamily:async()=>(await one("SELECT family_id FROM projects WHERE status='printing'"))?.family_id??null};
+ return {route,settings,backfill,ensureSlot,onApproved,onQuoted,beforeStart,onStarted,settle,onFinished,onFailed,onCancelled,projectSlot,tick,onPaid,onManualPaid,onPrinter,useMeasured:fn=>{measured=fn;},printingFamily:async()=>(await one("SELECT family_id FROM projects WHERE status='printing'"))?.family_id??null};
 }
