@@ -43,3 +43,9 @@
 @media(max-width:600px){.ov-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .badge.pa-fin.paid{background:#e7f2e6;color:#3e7042}.badge.pa-fin.open{background:#e7edf8;color:#4a6c9d}.badge.pa-fin.due{background:#fff0d3;color:#91611f}.badge.pa-fin.none{background:#edf1e6;color:#64736b}
+
+.pa-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:10px}.pa-head h1{margin:0;font-size:1.5rem}.pa-head .filters{margin:0}
+.pa-tools{margin:6px 0!important;gap:8px!important}.pa-tools select,.pa-tools input{min-height:38px;padding:7px 10px}
+.pa-bulk{border:0!important;padding:4px 2px!important;margin:4px 0!important;font-size:.9rem;opacity:1!important}.pa-bulk.on{border:1px solid currentColor!important;padding:6px 12px!important}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.main:has(.pa-head){padding-top:20px}
