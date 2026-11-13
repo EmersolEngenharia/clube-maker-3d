@@ -302,9 +302,14 @@ function seekAnim(t){
 }
 /* tempo real (acompanha a narração) -> tempo da animação */
 function warp(T){const o=TIMING.orig,n=TIMING.ns;let i=0;while(i<o.length-2&&T>=n[i+1])i++;
- const u=T-n[i],oL=o[i+1]-o[i],nL=n[i+1]-n[i],st=Math.min(nL/oL,1.7),play=oL*st;
- const lo=u<play?u/st:Math.min(oL-.25+(u-play)*.04,oL-.02);return o[i]+Math.min(lo,oL-.001)}
-function seekReal(T){seekAnim(warp(T))}
+ const u=T-n[i],oL=o[i+1]-o[i],nL=n[i+1]-n[i];
+ if(nL<=oL)return o[i]+u*oL/nL;
+ const tail=Math.min(.45,oL*.4);
+ if(u<oL-tail)return o[i]+u;            // animação em velocidade normal
+ const he=nL-tail;
+ if(u<he)return o[i]+oL-tail;           // segura a cena enquanto a narração fala
+ return o[i]+oL-tail+(u-he)}            // transição de saída em velocidade normal
+function seekReal(T){seekAnim(warp(T));stage.style.transformOrigin='50% 50%';stage.style.transform='scale('+(1+.014*Math.sin(T*.8))+')'}
 window.seek=seekReal;window.DURATION=TIMING.ns[TIMING.ns.length-1];window.BEATS=BEATS;
 document.fonts.ready.then(()=>{window.READY=true});
 seekReal(0);
