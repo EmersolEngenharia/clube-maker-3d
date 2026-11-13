@@ -142,12 +142,12 @@ document.addEventListener('input',e=>{if(!e.target.classList?.contains('date-br'
 
 // ---- Pedidos da equipe: busca, filtros, ordem e ações em massa ----
 const paOrder=['draft','review','question','approval','queued','printing','ready','completed','cancelled','failed'];
-const paState=()=>state.pa??={q:'',status:'',family:'',fin:'',sort:'updated',dir:'desc',sel:new Set()};
+const paState=()=>state.pa??={q:'',status:'ready',family:'',fin:'unpaid',sort:'updated',dir:'desc',sel:new Set()};
 const paNorm=v=>String(v??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 const paNumber=p=>'#'+String(p.id).padStart(3,'0');
 function paRows(){
  const f=paState(),q=paNorm(f.q).trim(),keys={updated:p=>p.updated,id:p=>p.id,name:p=>paNorm(p.name),family:p=>paNorm(p.family_name||p.participant),status:p=>paOrder.indexOf(p.status)},key=keys[f.sort]||keys.updated,dir=f.dir==='asc'?1:-1;
- return projectsBase().filter(p=>(!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!f.fin||paFinKey(p)===f.fin)&&(!q||paNorm(`${p.name} ${p.family_name||''} ${p.participant||''} ${paNumber(p)} ${p.id}`).includes(q))).sort((a,b)=>{const x=key(a),y=key(b);return ((x<y?-1:x>y?1:0)*dir)||(b.id-a.id);});
+ return projectsBase().filter(p=>(!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!f.fin||(f.fin==='unpaid'?['due','open'].includes(paFinKey(p)):paFinKey(p)===f.fin))&&(!q||paNorm(`${p.name} ${p.family_name||''} ${p.participant||''} ${paNumber(p)} ${p.id}`).includes(q))).sort((a,b)=>{const x=key(a),y=key(b);return ((x<y?-1:x>y?1:0)*dir)||(b.id-a.id);});
 }
 function adminProjectsPage(){
  const f=paState(),families=state.data.families||[];
@@ -155,7 +155,7 @@ function adminProjectsPage(){
  return `<div class="pa-tools"><label class="pa-search"><span class="sr-only">Buscar</span><input id="pa-q" type="search" placeholder="Nome, família, participante ou número" value="${esc(f.q)}" autocomplete="off"></label>
  <label><span class="sr-only">Etapa</span><select id="pa-status" aria-label="Etapa"><option value="">Etapa: todas</option>${paOrder.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${esc(labels[s])}</option>`).join('')}</select></label>
  <label><span class="sr-only">Família</span><select id="pa-family" aria-label="Família"><option value="">Família: todas</option>${families.map(x=>`<option value="${x.id}" ${f.family===String(x.id)?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label>
- <label><span class="sr-only">Financeiro</span><select id="pa-fin" aria-label="Financeiro"><option value="">Financeiro: todos</option>${['due','open','paid','none'].map(k=>`<option value="${k}" ${f.fin===k?'selected':''}>${paFinText[k]}</option>`).join('')}</select></label>
+ <label><span class="sr-only">Financeiro</span><select id="pa-fin" aria-label="Financeiro"><option value="">Financeiro: todos</option>${['unpaid','due','open','paid','none'].map(k=>`<option value="${k}" ${f.fin===k?'selected':''}>${paFinText[k]}</option>`).join('')}</select></label>
  <label><span class="sr-only">Ordenar por</span><select id="pa-sort" aria-label="Ordenar por">${sorts.map(([k,d,l])=>`<option value="${k}:${d}" ${f.sort===k&&f.dir===d?'selected':''}>${l}</option>`).join('')}</select></label></div>
  <div id="pa-list">${paListHtml()}</div>`;
 }
@@ -165,7 +165,7 @@ function paFinKey(p){
  if(['ready','completed'].includes(p.status))return p.charge>0?'due':'none';
  return '';
 }
-const paFinText={paid:'Pago',open:'PIX emitido · aguardando',due:'Cobrar / emitir PIX',none:'Sem valor a cobrar'};
+const paFinText={unpaid:'Não pagos (a cobrar ou aguardando)',paid:'Pago',open:'PIX emitido · aguardando',due:'Cobrar / emitir PIX',none:'Sem valor a cobrar'};
 function paFinance(p){const k=paFinKey(p);return k?`<span class="badge pa-fin ${k}">${paFinText[k]}</span>`:'<small class="muted">—</small>';}
 function paListHtml(){
  const f=paState(),rows=paRows(),visible=new Set(rows.map(p=>p.id));for(const id of [...f.sel])if(!visible.has(id))f.sel.delete(id);
