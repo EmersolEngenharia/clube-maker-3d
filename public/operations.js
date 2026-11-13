@@ -203,3 +203,44 @@ document.addEventListener('change',e=>{
  else if(t.id==='pa-all'){for(const p of paRows())t.checked?f.sel.add(p.id):f.sel.delete(p.id);paRefresh();}
  else if(t.classList?.contains('pa-check')){const id=Number(t.dataset.id);t.checked?f.sel.add(id):f.sel.delete(id);paRefresh();}
 });
+
+// ---- Visão geral da equipe: o mês inteiro numa tela só ----
+const ovColors=['#13c4d0','#ff6328','#ffcf54','#7c8cff','#4ade80','#e879f9','#38bdf8','#f472b6','#a3e635','#94a3b8'];
+const ovH=m=>`${Number((m/60).toFixed(1)).toLocaleString('pt-BR')} h`,ovG=g=>`${Number(Number(g).toFixed(1)).toLocaleString('pt-BR')} g`;
+const ovShort=n=>String(n).replace(/^Fam[ií]lia\s+/i,'');
+function ovData(){
+ const fs=state.data.families,ps=state.data.projects,per=fs.find(f=>f.balance)?.balance.period||new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit'}).format(new Date()).slice(0,7);
+ const fam=fs.map(f=>{const b=f.balance||{};return {id:f.id,name:f.name,used:b.used||0,held:b.held||0,base:f.allowance||b.baseAllowance||0,extraMinutes:b.extraMinutes||0,extraCost:b.extraCost||0,materialCost:b.materialCost||0,grams:b.grams||0};}).sort((a,b)=>(b.used+b.held)-(a.used+a.held)||a.name.localeCompare(b.name));
+ fam.forEach((f,i)=>f.color=ovColors[i%ovColors.length]);
+ const sum=k=>fam.reduce((n,f)=>n+f[k],0),open=ps.filter(p=>p.period===per&&['queued','printing'].includes(p.status));
+ const pending={minutes:open.reduce((n,p)=>n+Math.max(0,p.minutes-p.included),0),hoursCost:open.reduce((n,p)=>n+Math.round(Math.max(0,p.minutes-p.included)*p.extra_rate/60),0),grams:open.reduce((n,p)=>n+p.grams,0),materialCost:open.reduce((n,p)=>n+Math.round(p.grams*p.material_rate/1000),0)};
+ const count=s=>ps.filter(p=>s.includes(p.status)).length;
+ return {per,fam,ps,pending,count,used:sum('used'),held:sum('held'),base:sum('base'),extraMinutes:sum('extraMinutes'),extraCost:sum('extraCost'),materialCost:sum('materialCost'),grams:sum('grams')};
+}
+function ovDonut(slices,center,sub){
+ const total=slices.reduce((n,s)=>n+s.value,0);if(!total)return '';
+ let off=25;
+ return `<svg viewBox="0 0 42 42" class="ov-donut" role="img" aria-label="${esc(center)} ${esc(sub)}"><circle cx="21" cy="21" r="15.9155" fill="none" stroke="var(--border)" stroke-width="6"/>${slices.filter(s=>s.value>0).map(s=>{const pct=s.value/total*100,el=`<circle cx="21" cy="21" r="15.9155" fill="none" stroke="${s.color}" stroke-width="6" stroke-dasharray="${pct.toFixed(3)} ${(100-pct).toFixed(3)}" stroke-dashoffset="${off.toFixed(3)}"><title>${esc(s.label)}: ${esc(s.text)}</title></circle>`;off-=pct;return el;}).join('')}<text x="21" y="21.6" text-anchor="middle" class="ov-donut-v">${esc(center)}</text><text x="21" y="26.4" text-anchor="middle" class="ov-donut-s">${esc(sub)}</text></svg>`;
+}
+const ovLegend=slices=>`<ul class="ov-legend">${slices.map(s=>`<li><svg class="ov-sw" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="${s.color}"/></svg><span>${esc(s.label)}</span><b>${esc(s.text)}</b></li>`).join('')}</ul>`;
+function ovWhen(q){if(!q.start)return 'sem horário';const d=new Date(q.start);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+function adminOverview(){
+ const d=ovData(),month=new Date(d.per+'-15T12:00:00').toLocaleDateString('pt-BR',{month:'long',year:'numeric'}),fams=new Map(state.data.projects.map(p=>[p.id,p.family_name||p.participant]));
+ const used=d.fam.filter(f=>f.used+f.held>0),usedTotal=d.used+d.held;
+ const kpi=(label,value,sub,nav)=>`<button class="ov-kpi" ${nav?`data-nav="${nav}"`:'type="button" tabindex="-1"'}><span>${label}</span><strong>${value}</strong><small>${sub}</small></button>`;
+ const revenue=d.extraCost+d.materialCost,forecast=d.pending.hoursCost+d.pending.materialCost;
+ const pie=used.map(f=>({label:ovShort(f.name),value:f.used+f.held,color:f.color,text:`${ovH(f.used+f.held)} · ${Math.round((f.used+f.held)/usedTotal*100)}%`}));
+ const scale=Math.max(1,...d.fam.map(f=>Math.max(f.base,f.used+f.held)));
+ const bars=d.fam.map(f=>{const w=v=>(v/scale*100).toFixed(2),over=f.used+f.held>f.base;return `<div class="ov-bar"><span class="ov-bar-name" title="${esc(f.name)}">${esc(ovShort(f.name))}</span><svg class="ov-bar-track" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="${esc(f.name)}: ${ovH(f.used)} usadas, ${ovH(f.held)} reservadas, franquia de ${ovH(f.base)}"><rect width="100" height="10" class="ov-track"/><rect width="${w(f.used)}" height="10" fill="${f.color}"/><rect x="${w(f.used)}" width="${w(f.held)}" height="10" fill="${f.color}" opacity=".45"/><rect x="0" y="0" width="${w(f.base)}" height="10" class="ov-frame" vector-effect="non-scaling-stroke"/></svg><b class="${over?'ov-over':''}">${ovH(f.used+f.held)} <small>/ ${ovH(f.base)}</small></b></div>`;}).join('');
+ const money$=v=>money(v);
+ const rev=[{label:'Horas extras',value:d.extraCost,color:ovColors[0],text:money$(d.extraCost)},{label:'Filamento',value:d.materialCost,color:ovColors[1],text:money$(d.materialCost)}];
+ const fresh=state.data.projects.filter(p=>['review','question','failed'].includes(p.status)).sort((a,b)=>String(b.created).localeCompare(String(a.created)));
+ const queue=(state.data.queue||[]);
+ return `<div class="ov"><div class="ov-head"><div><div class="eyebrow">VISÃO GERAL</div><h1>${month.charAt(0).toUpperCase()+month.slice(1)}</h1></div><div class="row"><button class="btn secondary small" data-nav="projects">Ver pedidos</button>${btn('Cadastrar família','family-new','secondary small')}</div></div>
+ <div class="ov-kpis">${kpi('Pedidos novos',d.count(['review','failed']),`${d.count(['question'])} aguardando a família`,'projects')}${kpi('Aguardando aprovação',d.count(['approval']),'orçamento enviado','projects')}${kpi('Na fila de impressão',d.count(['queued','printing']),`${d.count(['printing'])} imprimindo agora`,'queue')}${kpi('Prontos para retirar',d.count(['ready']),'aguardando a família','projects')}${kpi('Horas usadas no mês',ovH(usedTotal),`de ${ovH(d.base)} de franquia`,'')}${kpi('Faturamento do mês',money(revenue),forecast?`+ ${money(forecast)} previstos na fila`:'horas extras + filamento','')}</div>
+ <section class="ov-card ov-pie"><h2>Horas por família</h2>${pie.length?`<div class="ov-pie-body">${ovDonut(pie,ovH(usedTotal),'no mês')}${ovLegend(pie)}</div>`:'<p class="muted">Nenhuma hora usada neste mês ainda.</p>'}</section>
+ <section class="ov-card ov-bars"><h2>Uso da franquia</h2><p class="ov-note">cheio: usadas · claro: reservadas na fila · contorno: franquia do mês</p><div class="ov-bars-body">${bars||'<p class="muted">Nenhuma família cadastrada.</p>'}</div></section>
+ <section class="ov-card ov-rev"><h2>Faturamento do mês</h2>${revenue?`<div class="ov-pie-body">${ovDonut(rev,money(revenue),'realizado')}${ovLegend(rev)}</div>`:'<p class="muted ov-nothing">Ainda sem valores cobrados neste mês.</p>'}<table class="ov-rev-table"><thead><tr><th></th><th>Quantidade</th><th>Valor</th></tr></thead><tbody><tr><td>Horas extras</td><td>${ovH(d.extraMinutes)}</td><td>${money(d.extraCost)}</td></tr><tr><td>Filamento</td><td>${ovG(d.grams)}</td><td>${money(d.materialCost)}</td></tr><tr class="total"><td>Realizado</td><td></td><td>${money(revenue)}</td></tr><tr class="forecast"><td>Previsto na fila</td><td>${ovG(d.pending.grams)} · ${ovH(d.pending.minutes)} extras</td><td>${money(forecast)}</td></tr></tbody></table></section>
+ <section class="ov-card ov-new"><div class="ov-card-head"><h2>Pedidos novos abertos</h2><button class="text-btn" data-nav="projects">Todos ${icon('arrow')}</button></div><div class="ov-list">${fresh.length?fresh.slice(0,8).map(p=>`<button class="ov-row" data-project="${p.id}"><span><b>${esc(p.name)}</b><small>#${String(p.id).padStart(3,'0')} · ${esc(p.family_name||p.participant)}</small></span>${badge(p.status)}<em>${date(p.created)}</em></button>`).join(''):'<p class="muted">Nenhum pedido novo. Tudo em dia.</p>'}</div></section>
+ <section class="ov-card ov-queue"><div class="ov-card-head"><h2>Fila de impressão</h2><button class="text-btn" data-nav="queue">Produção ${icon('arrow')}</button></div><div class="ov-list">${queue.length?queue.slice(0,8).map((q,i)=>`<button class="ov-row" data-project="${q.id}"><span><b>${q.position||i+1}. ${esc(q.name||'Pedido #'+String(q.id).padStart(3,'0'))}</b><small>${esc(fams.get(q.id)||'')} · ${hours(q.minutes)}</small></span>${badge(q.status)}<em>${ovWhen(q)}</em></button>`).join(''):'<p class="muted">Nada na fila de impressão.</p>'}</div></section></div>`;
+}
