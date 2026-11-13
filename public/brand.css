@@ -54,3 +54,6 @@ h1,h2,h3{color:inherit}h1{font-weight:760;letter-spacing:-1.1px}h2{font-weight:7
 .gallery-note{font-style:italic}.gallery-stats{display:flex;align-items:center;gap:6px;font-weight:600}.gallery-stats .icon{width:16px;height:16px}
 .gallery-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}.gallery-actions .btn{display:inline-flex;align-items:center;gap:6px;text-decoration:none}.gallery-actions .icon{width:15px;height:15px}
 .gallery-offer{display:grid;gap:8px}.gallery-offer p{margin:0}.gallery-offer.attention{border:1px solid var(--turquoise)}.gallery-offer .row{flex-wrap:wrap;gap:8px}
+
+/* Vídeo-manual do pedido */
+.how-video{display:block;width:100%;max-height:70vh;margin-top:14px;border-radius:18px;background:#162846;box-shadow:0 10px 30px #16284622}.how-video.tall{max-width:360px;margin-inline:auto}

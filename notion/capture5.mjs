@@ -1,0 +1,16 @@
+import {createRequire} from 'node:module';import {writeFileSync} from 'node:fs';
+const {chromium}=createRequire('/opt/node22/lib/node_modules/')('playwright');
+const b=await chromium.launch({args:['--no-sandbox']});const p=await (await b.newContext({viewport:{width:1440,height:1000},deviceScaleFactor:2})).newPage();
+await p.goto('http://127.0.0.1:3180');await p.getByLabel('E-mail',{exact:true}).fill('helena@example.test');await p.getByLabel('Senha',{exact:true}).fill('Local-test-only-123');await p.getByRole('button',{name:'Entrar no meu espaço'}).click();await p.getByRole('heading',{name:/Olá, Helena/}).waitFor();
+await p.evaluate(()=>fetch('/api/profile',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Helena Souza Miranda',theme:'candy',avatar:'robot',experience:'guided'})}));await p.reload();await p.getByRole('heading',{name:/Olá, Helena/}).waitFor();
+const rel=async(sel,idx=0)=>{const c=await p.locator('.wizard .card').first().boundingBox(),e=await p.locator(sel).nth(idx).boundingBox();return {x:(e.x-c.x)/c.width,y:(e.y-c.y)/c.height,w:e.width/c.width,h:e.height/c.height};};
+const m={};
+await p.getByRole('button',{name:'Criar projeto',exact:true}).click();await p.waitForTimeout(500);
+for(const k of['idea','file','link'])m['choice-'+k]=await rel(`.choice[data-kind="${k}"]`);
+m.s1btn=await rel('.wizard-controls button.btn');
+await p.locator('.choice[data-kind="idea"]').click();await p.getByRole('button',{name:'Continuar',exact:true}).click();await p.waitForTimeout(400);
+await p.getByLabel('Nome do projeto').fill('x');await p.getByLabel('O que você quer criar?').fill('x');await p.getByRole('button',{name:'Continuar',exact:true}).click();await p.waitForTimeout(400);
+m.s3={sel1:await rel('select',0),sel2:await rel('select',1),qty:await rel('input[type=number]',0)};
+await p.getByRole('button',{name:'Continuar',exact:true}).click();await p.waitForTimeout(400);
+m.s4={notice:await rel('.wizard .notice'),submit:await rel('.wizard-controls button.btn'),rows:await rel('.summary')};
+writeFileSync('notion/assets/cutouts/boxes.json',JSON.stringify(m,null,1));console.log(JSON.stringify(m));await b.close();

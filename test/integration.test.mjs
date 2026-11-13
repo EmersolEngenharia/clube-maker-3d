@@ -98,5 +98,11 @@ test('ciclo completo e fronteiras de segurança do clube',async t=>{
   r=await admin('/projects/bulk',{action:'delete',ids:[b.id,c.id,a.id]});assert.deepEqual(r.done.sort(),[b.id,c.id].sort());assert.equal(r.skipped[0].id,a.id);
   await admin(`/projects/${b.id}`,undefined,404);assert.equal((await admin(`/projects/${a.id}`)).status,'ready');
  });
+ await t.test('vídeo-manual do pedido é público e aceita Range',async()=>{
+  const full=await fetch(base+'/media/como-fazer-pedido-16x9.mp4',{method:'HEAD'});assert.equal(full.status,200);assert.equal(full.headers.get('content-type'),'video/mp4');assert.equal(full.headers.get('accept-ranges'),'bytes');
+  const part=await fetch(base+'/media/como-fazer-pedido-9x16.mp4',{headers:{Range:'bytes=0-99'}});assert.equal(part.status,206);assert.equal((await part.arrayBuffer()).byteLength,100);assert.match(part.headers.get('content-range'),/^bytes 0-99\//);
+  assert.equal((await fetch(base+'/media/como-fazer-pedido-16x9.jpg')).status,200);
+  assert.equal((await fetch(base+'/media/outro.mp4')).status,404);
+ });
  await t.test('origem externa rejeitada e saída encerra sessão',async()=>{await guardian('/participants',{name:'Intruso'},403,{Origin:'https://untrusted.example'});await guardian('/logout',{});await guardian('/dashboard',undefined,401);});
 });
