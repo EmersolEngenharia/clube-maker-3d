@@ -13,7 +13,7 @@ import {createOperations} from './operations.mjs';
 import { createDatabase } from './db.mjs';
 import { createFileStorage } from './storage.mjs';
 import { randomBytes, scrypt, timingSafeEqual, createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { period, allocation, settle } from './domain.mjs';
@@ -158,6 +158,17 @@ async function handle(req,res){
     const url=new URL(req.url,'http://localhost'), path=url.pathname, method=req.method;
     validateRequest(req);
     if(!path.startsWith('/api/')){
+      // Vídeo-manual do pedido: público, sem cookies, com suporte a Range (necessário no iPhone).
+      const media=/^\/media\/(como-fazer-pedido-(?:16x9|9x16)\.(?:mp4|jpg))$/.exec(path);
+      if(media&&['GET','HEAD'].includes(method)){
+        const full=join(root,'public','media',media[1]),size=statSync(full).size,type=media[1].endsWith('.mp4')?'video/mp4':'image/jpeg',range=/^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range||''));
+        res.setHeader('Cache-Control','public, max-age=86400');res.setHeader('Accept-Ranges','bytes');
+        let start=0,end=size-1,status=200;
+        if(range&&(range[1]||range[2])){start=range[1]===''?Math.max(0,size-Number(range[2])):Number(range[1]);end=range[1]===''||range[2]===''?size-1:Math.min(Number(range[2]),size-1);if(start>end||start>=size){res.writeHead(416,{'Content-Range':`bytes */${size}`});res.end();return;}status=206;res.setHeader('Content-Range',`bytes ${start}-${end}/${size}`);}
+        res.writeHead(status,{'Content-Type':type,'Content-Length':end-start+1});
+        if(method==='HEAD'){res.end();return;}
+        createReadStream(full,{start,end}).pipe(res);return;
+      }
       const file=staticFiles.get(path);if(!file||!['GET','HEAD'].includes(method))fail('Página não encontrada.',404);
       const encodings=String(req.headers['accept-encoding']||'').split(',').map(v=>v.trim().split(';'));const accepts=name=>encodings.some(([n,...params])=>n===name&&!params.some(p=>/^q=0(?:\.0*)?$/.test(p.trim())));
       const encoding=accepts('br')?'br':accepts('gzip')?'gzip':null,bytes=encoding?file[encoding]:file.bytes,etag=file.etags[encoding||'identity'];
