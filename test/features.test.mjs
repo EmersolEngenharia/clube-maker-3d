@@ -42,6 +42,13 @@ test('perfis, famílias, equipe, convites e publicações com autorização',asy
   await admin('/benefits',{familyId:f.id,kind:'hours',value:60,reason:'Presente'});
   assert.equal((await guardian('/dashboard')).balance.available,before+60);
   assert.equal((await admin('/dashboard')).families.find(x=>x.id===f.id).balance.available,before+60);
+  // Várias famílias de uma vez: cada uma ganha a sua concessão; cupom não aceita lote.
+  const total=async fam=>(await admin('/dashboard')).families.find(x=>x.id===fam.id).balance.available,a=await total(f),b2=await total(f2);
+  await guardian('/benefits',{familyIds:[f.id,f2.id],kind:'hours',value:90,reason:'Lote'},403);
+  await admin('/benefits',{familyIds:[],kind:'hours',value:90,reason:'Lote'},400);
+  await admin('/benefits',{familyIds:[f.id,f2.id],kind:'discount',value:100,code:'LOTE',reason:'Lote'},400);
+  assert.equal((await admin('/benefits',{familyIds:[f.id,f2.id],kind:'hours',value:90,reason:'Lote',notify:false})).count,2);
+  assert.equal(await total(f),a+90);assert.equal(await total(f2),b2+90);
   await admin('/benefits',{familyId:f.id,kind:'discount',value:3000,reason:'Boas-vindas',code:'BEMVINDO'});
   await admin('/benefits',{familyId:f.id,kind:'discount',value:3000,reason:'Duplicado',code:'BEMVINDO'},400);
   await admin('/payments',{familyId:f2.id,description:'Mensalidade',cents:12000,gross:15000,coupon:'BEMVINDO'},400);

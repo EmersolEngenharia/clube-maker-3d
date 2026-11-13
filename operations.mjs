@@ -4,7 +4,7 @@ import {localDate,monthEnd,expiry} from './quota.mjs';
 import {period} from './domain.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const now=()=>new Date().toISOString();
-export function createOperations({db,quota,fail,str,integer,body,json,creds,password,login}){
+export function createOperations({db,quota,fail,str,integer,body,json,creds,password,login,onHours=async()=>{}}){
  const one=(q,...a)=>db.one(q,...a),all=(q,...a)=>db.all(q,...a),run=(q,...a)=>db.run(q,...a);
  const need=(ok)=>{if(!ok)fail('Você não tem permissão para esta ação.',403);};
  const audit=(u,action,target)=>run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,action,String(target),now());
@@ -81,14 +81,26 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const fid=Number(new URL(req.url,'http://localhost').searchParams.get('familyId')||u.family_id);need(isTeam(u)||(u.role==='guardian'&&fid===u.family_id));await family(fid);json(res,{benefits:await getBenefits(fid)});return true;
   }
   if(path==='/api/benefits'&&method==='POST'){
-   need(canFinance(u));const b=await body(req),f=await family(b.familyId);
+   need(canFinance(u));const b=await body(req);
    if(!['hours','discount'].includes(b.kind))fail('Benefício inválido.');
-   const value=integer(b.value,'Valor',1,b.kind==='hours'?60000:10000000),reason=str(b.reason,'Motivo',150),code=b.kind==='hours'?randomBytes(12).toString('hex'):str(b.code,'Cupom',40).toUpperCase();
-   if(!/^[A-Z0-9_-]+$/i.test(code))fail('Use letras, números, hífen ou sublinhado no cupom.');
-   if(await one('SELECT code FROM benefits WHERE code=?',code))fail('Este código já existe.');
+   // Horas podem ir para várias famílias de uma vez (familyIds); cupom é sempre de uma família só.
+   const ids=Array.isArray(b.familyIds)?[...new Set(b.familyIds.map(Number))]:[b.familyId];
+   if(Array.isArray(b.familyIds)&&b.kind!=='hours')fail('Cupom é exclusivo de uma família.');
+   if(!ids.length||ids.length>100)fail('Escolha de 1 a 100 famílias.');
+   const families=[];for(const id of ids)families.push(await family(id));
+   const value=integer(b.value,'Valor',1,b.kind==='hours'?60000:10000000),reason=str(b.reason,'Motivo',150);
    const expiresOn=date(b.expiresOn||monthEnd(),'Validade');if(expiresOn<localDate())fail('A validade não pode estar no passado.');
-   await run('INSERT INTO benefits(code,family_id,kind,value,period,reason,created_by,created) VALUES(?,?,?,?,?,?,?,?)',code,f.id,b.kind,value,period(),reason,u.id,now());await run('INSERT INTO benefit_terms(code,expires_on) VALUES(?,?)',code,expiresOn);
-   await audit(u,'benefit.'+b.kind,code);json(res,{ok:true,code});return true;
+   const codes=[];
+   for(const f of families){
+    const code=b.kind==='hours'?randomBytes(12).toString('hex'):str(b.code,'Cupom',40).toUpperCase();
+    if(!/^[A-Z0-9_-]+$/i.test(code))fail('Use letras, números, hífen ou sublinhado no cupom.');
+    if(await one('SELECT code FROM benefits WHERE code=?',code))fail('Este código já existe.');
+    await run('INSERT INTO benefits(code,family_id,kind,value,period,reason,created_by,created) VALUES(?,?,?,?,?,?,?,?)',code,f.id,b.kind,value,period(),reason,u.id,now());await run('INSERT INTO benefit_terms(code,expires_on) VALUES(?,?)',code,expiresOn);
+    await audit(u,'benefit.'+b.kind,code);codes.push(code);
+   }
+   // O aviso alegre no WhatsApp só sai para horas, e pode ser desligado pela equipe.
+   if(b.kind==='hours'&&b.notify!==false)for(const f of families)await onHours({family:f,minutes:value,expiresOn,user:u});
+   json(res,{ok:true,code:codes[0],count:codes.length});return true;
   }
   if(path==='/api/payments/preview'&&method==='POST'){need(canFinance(u));const b=await body(req);json(res,await preview(b.familyId,b));return true;}
   if(path==='/api/payments'&&method==='POST'){

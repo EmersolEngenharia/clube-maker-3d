@@ -315,7 +315,9 @@ async function handle(req,res){
     fail('Ação não encontrada.',404);
 }
 
-const operations=createOperations({db,quota,fail,str,integer,body,json,creds,password,login});
+// Horas de presente: avisa o responsável principal pelo mesmo WhatsApp dos demais avisos (o cliente é criado mais abaixo).
+const notifyHours=async({family,minutes,expiresOn,user})=>{try{const h=Number((minutes/60).toFixed(2)).toLocaleString('pt-BR'),until=expiresOn.split('-').reverse().join('/');if((await broadcasts.notifyFamily({authorId:user.id,familyId:family.id,text:`🎉 Olá, {nome}! Olha que legal: a família ${family.name} ganhou ${h} ${minutes===60?'hora':'horas'} de crédito para imprimir ainda mais no Clube Maker 3D! 🖨️✨ Use até ${until} para dar vida às suas ideias. Abra um pedido: ${process.env.PUBLIC_ORIGIN||'https://maker3d.emersol.ai'}`})).queued)void broadcasts.tick().catch(()=>console.error('Falha no envio de comunicados.'));}catch{console.error('Falha ao avisar a família sobre as horas.');}};
+const operations=createOperations({db,quota,fail,str,integer,body,json,creds,password,login,onHours:notifyHours});
 await db.transaction(()=>operations.backfill());
 const billing=createBilling({db,fail,str,integer,config,onCharge:c=>automation.onCharge(c),notify:e=>schedule.onPaid(e)});
 const asaas=new AsaasProvider({key:process.env.ASAAS_API_KEY,webhookToken:process.env.ASAAS_WEBHOOK_TOKEN,environment:process.env.ASAAS_ENV||'production'});
