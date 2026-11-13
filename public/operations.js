@@ -142,12 +142,12 @@ document.addEventListener('input',e=>{if(!e.target.classList?.contains('date-br'
 
 // ---- Pedidos da equipe: busca, filtros, ordem e ações em massa ----
 const paOrder=['draft','review','question','approval','queued','printing','ready','completed','cancelled','failed'];
-const paState=()=>state.pa??={q:'',status:'',family:'',sort:'updated',dir:'desc',sel:new Set()};
+const paState=()=>state.pa??={q:'',status:'',family:'',fin:'',sort:'updated',dir:'desc',sel:new Set()};
 const paNorm=v=>String(v??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 const paNumber=p=>'#'+String(p.id).padStart(3,'0');
 function paRows(){
  const f=paState(),q=paNorm(f.q).trim(),keys={updated:p=>p.updated,id:p=>p.id,name:p=>paNorm(p.name),family:p=>paNorm(p.family_name||p.participant),status:p=>paOrder.indexOf(p.status)},key=keys[f.sort]||keys.updated,dir=f.dir==='asc'?1:-1;
- return projectsBase().filter(p=>(!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!q||paNorm(`${p.name} ${p.family_name||''} ${p.participant||''} ${paNumber(p)} ${p.id}`).includes(q))).sort((a,b)=>{const x=key(a),y=key(b);return ((x<y?-1:x>y?1:0)*dir)||(b.id-a.id);});
+ return projectsBase().filter(p=>(!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!f.fin||paFinKey(p)===f.fin)&&(!q||paNorm(`${p.name} ${p.family_name||''} ${p.participant||''} ${paNumber(p)} ${p.id}`).includes(q))).sort((a,b)=>{const x=key(a),y=key(b);return ((x<y?-1:x>y?1:0)*dir)||(b.id-a.id);});
 }
 function adminProjectsPage(){
  const f=paState(),families=state.data.families||[];
@@ -155,21 +155,22 @@ function adminProjectsPage(){
  return `<div class="pa-tools"><label class="pa-search"><span class="sr-only">Buscar</span><input id="pa-q" type="search" placeholder="Nome, família, participante ou número" value="${esc(f.q)}" autocomplete="off"></label>
  <label><span class="sr-only">Etapa</span><select id="pa-status" aria-label="Etapa"><option value="">Etapa: todas</option>${paOrder.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${esc(labels[s])}</option>`).join('')}</select></label>
  <label><span class="sr-only">Família</span><select id="pa-family" aria-label="Família"><option value="">Família: todas</option>${families.map(x=>`<option value="${x.id}" ${f.family===String(x.id)?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label>
+ <label><span class="sr-only">Financeiro</span><select id="pa-fin" aria-label="Financeiro"><option value="">Financeiro: todos</option>${['due','open','paid','none'].map(k=>`<option value="${k}" ${f.fin===k?'selected':''}>${paFinText[k]}</option>`).join('')}</select></label>
  <label><span class="sr-only">Ordenar por</span><select id="pa-sort" aria-label="Ordenar por">${sorts.map(([k,d,l])=>`<option value="${k}:${d}" ${f.sort===k&&f.dir===d?'selected':''}>${l}</option>`).join('')}</select></label></div>
  <div id="pa-list">${paListHtml()}</div>`;
 }
-function paFinance(p){
- const chip=(c,t)=>`<span class="badge pa-fin ${c}">${t}</span>`;
- if(p.paid)return chip('paid','Pago');
- if(p.bill_open)return chip('open','PIX emitido · aguardando');
- if(['ready','completed'].includes(p.status)&&p.charge>0)return chip('due','Cobrar / emitir PIX');
- if(['ready','completed'].includes(p.status))return chip('none','Sem valor a cobrar');
- return '<small class="muted">—</small>';
+function paFinKey(p){
+ if(p.paid)return 'paid';
+ if(p.bill_open)return 'open';
+ if(['ready','completed'].includes(p.status))return p.charge>0?'due':'none';
+ return '';
 }
+const paFinText={paid:'Pago',open:'PIX emitido · aguardando',due:'Cobrar / emitir PIX',none:'Sem valor a cobrar'};
+function paFinance(p){const k=paFinKey(p);return k?`<span class="badge pa-fin ${k}">${paFinText[k]}</span>`:'<small class="muted">—</small>';}
 function paListHtml(){
  const f=paState(),rows=paRows(),visible=new Set(rows.map(p=>p.id));for(const id of [...f.sel])if(!visible.has(id))f.sel.delete(id);
  const arrow=k=>f.sort===k?(f.dir==='asc'?' ▲':' ▼'):'',th=(k,l)=>`<th><button type="button" class="text-btn pa-th" data-action="pa-sort" data-sort="${k}">${l}${arrow(k)}</button></th>`;
- const selected=rows.filter(p=>f.sel.has(p.id)),filtered=Boolean(f.q||f.status||f.family);
+ const selected=rows.filter(p=>f.sel.has(p.id)),filtered=Boolean(f.q||f.status||f.family||f.fin);
  const count=`${rows.length} de ${state.data.projects.length} pedido${state.data.projects.length>1?'s':''}${filtered?` · ${btn('Limpar filtros','pa-clear','secondary small')}`:''}`;
  const bulk=`<div class="pa-bulk ${selected.length?'on':''}" role="region" aria-label="Ações em massa" aria-live="polite">${selected.length?`<strong>${selected.length} selecionado${selected.length>1?'s':''}</strong>`:`<span>${count}</span>`}${adminUser()&&selected.length?`<span class="row">${btn('Finalizar (já impressos)','pa-bulk','secondary small','data-do="finish"')}${btn('Marcar retirado','pa-bulk','secondary small','data-do="collect"')}${btn('Marcar pago','pa-bulk','secondary small','data-do="paid"')}${btn('Cancelar','pa-bulk','secondary small','data-do="cancel"')}${btn('Excluir','pa-bulk','secondary small danger','data-do="delete"')}${btn('Limpar seleção','pa-sel-clear','secondary small')}</span>`:''}</div>`;
  const body=rows.length?`<div class="card table-wrap"><table class="pa-table"><thead><tr>${adminUser()?`<th class="pa-check-col"><input type="checkbox" id="pa-all" aria-label="Marcar todos os pedidos da lista" ${selected.length&&selected.length===rows.length?'checked':''}></th>`:''}${th('name','Projeto')}${th('family','Família / participante')}${th('status','Etapa')}<th>Financeiro</th>${th('updated','Atualizado')}<th></th></tr></thead><tbody>${rows.map(p=>`<tr class="${f.sel.has(p.id)?'selected':''}">${adminUser()?`<td class="pa-check-col"><input type="checkbox" class="pa-check" data-id="${p.id}" aria-label="Marcar ${esc(p.name)}" ${f.sel.has(p.id)?'checked':''}></td>`:''}<td><div class="row-model">${p.model_site?modelThumb(Number(p.model_image)?`/api/model-image/${p.id}`:null):''}<div><strong>${esc(p.name)}</strong><br><small>${paNumber(p)}${p.model_site?' · '+esc(siteNames[p.model_site]||'Link externo'):''}</small>${p.model_site&&licensePending(p)&&!['completed','cancelled'].includes(p.status)?'<br><span class="license-chip warn">Licença a conferir</span>':''}</div></div></td><td>${esc(p.family_name||p.participant)}</td><td>${badge(p.status)}</td><td>${paFinance(p)}</td><td>${date(p.updated)}</td><td><button class="text-btn" data-project="${p.id}">Abrir ${icon('arrow')}</button></td></tr>`).join('')}</tbody></table></div>`:empty(filtered?'Nenhum pedido com esses filtros':'Nenhum projeto nesta lista',filtered?'Ajuste a busca ou limpe os filtros para ver mais pedidos.':'Quando uma ideia chegar por aqui, você poderá acompanhar cada etapa.',filtered?btn('Limpar filtros','pa-clear','secondary'):'');
@@ -187,7 +188,7 @@ async function paAction(action,target){
  const f=paState();
  switch(action){
   case'pa-sort':{const k=target.dataset.sort;if(f.sort===k)f.dir=f.dir==='asc'?'desc':'asc';else{f.sort=k;f.dir=k==='updated'||k==='id'?'desc':'asc';}render();return true;}
-  case'pa-clear':f.q='';f.status='';f.family='';render();return true;
+  case'pa-clear':f.q='';f.status='';f.family='';f.fin='';render();return true;
   case'pa-sel-clear':f.sel.clear();paRefresh();return true;
   case'pa-bulk':{
    const kind=target.dataset.do,t=paText[kind],picked=paRows().filter(p=>f.sel.has(p.id));
@@ -210,6 +211,7 @@ document.addEventListener('change',e=>{
  const t=e.target,f=paState();
  if(t.id==='pa-status'){f.status=t.value;paRefresh();}
  else if(t.id==='pa-family'){f.family=t.value;paRefresh();}
+ else if(t.id==='pa-fin'){f.fin=t.value;paRefresh();}
  else if(t.id==='pa-sort'){[f.sort,f.dir]=t.value.split(':');paRefresh();}
  else if(t.id==='pa-all'){for(const p of paRows())t.checked?f.sel.add(p.id):f.sel.delete(p.id);paRefresh();}
  else if(t.classList?.contains('pa-check')){const id=Number(t.dataset.id);t.checked?f.sel.add(id):f.sel.delete(id);paRefresh();}

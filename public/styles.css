@@ -49,3 +49,5 @@
 .pa-bulk{border:0!important;padding:4px 2px!important;margin:4px 0!important;font-size:.9rem;opacity:1!important}.pa-bulk.on{border:1px solid currentColor!important;padding:6px 12px!important}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .main:has(.pa-head){padding-top:20px}
+
+.pa-tools{grid-template-columns:2fr 1fr 1fr 1fr 1.2fr!important}@media(max-width:760px){.pa-tools{grid-template-columns:1fr 1fr!important}}
