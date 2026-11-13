@@ -104,7 +104,7 @@ ao crescer, paginar projetos concluídos e devolver o item alterado na própria
 resposta da ação.
 
 ### 6. Upload em base64 dentro de JSON
-Arquivos STL/3MF de até 10 MB viajam como base64 (+33%) e ficam inteiros na memória
+Arquivos STL/3MF de até 25 MB viajam como base64 (+33%) e ficam inteiros na memória
 (contêiner com 384 MB). Envio binário direto (ou URL assinada do Storage) reduz
 tempo e memória.
 

@@ -128,7 +128,7 @@ pasta `data/`** para um backup consistente; guarde o backup fora deste diretóri
 - Separação de famílias e autorização de cada operação no servidor.
 - Perfis de participantes dentro da família; acesso de aprendiz opcional por convite.
 - Assistente de criação de projetos, rascunhos editáveis e avaliação.
-- Arquivos STL/3MF e referências PNG/JPG, até cinco arquivos de 10 MB por projeto.
+- Arquivos STL/3MF e referências PNG/JPG, até cinco arquivos de até 25 MB por projeto.
 - Download de arquivos restrito à família do projeto e à equipe.
 - Conversa e histórico de eventos por projeto.
 - Orçamento manual a partir do fatiador, incluindo tempo e material totais.
