@@ -68,6 +68,8 @@ test('caixa, estoque, benefícios, convites e permissões de cada função',asyn
   await fin('/payments',{...payment,cents:15000},400);
   const concurrent=await Promise.all([fin('/payments',payment),admin('/payments',payment)]);assert.equal(concurrent.filter(x=>x.duplicate).length,1);
   await fin('/payments',{...payment,requestKey:randomUUID()},400);
+  // O painel da equipe soma as mensalidades do mês; quem não tem acesso financeiro não recebe o valor.
+  {const m=(await fin('/dashboard')).membership;assert.equal(m.reduce((n,r)=>n+r.cents,0),12000);assert.equal((await admin('/dashboard')).membership.length,1);assert.equal((await op('/dashboard')).membership,null);assert.equal((await g('/dashboard')).membership,null);}
   await fin('/payments',{familyId:f.id,description:'Isenção',gross:15000,cents:0,waiver:true,reason:'Bolsa de participação',entryDate:today,requestKey:randomUUID()});
   const p=await g('/projects',{name:'Peça',description:'Uma peça',participant:'Criador',kind:'idea',size:'Pequena',color:'Azul',quantity:1});await g(`/projects/${p.id}/submit`,{});
   await fin(`/projects/${p.id}/quote`,{minutes:60,grams:100,material:'PLA',note:'Negado'},403);

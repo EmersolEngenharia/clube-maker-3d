@@ -221,6 +221,8 @@ async function handle(req,res){
         benefits:{sql:"SELECT b.*,t.expires_on FROM benefits b LEFT JOIN benefit_terms t ON t.code=b.code WHERE b.kind='hours'"+(team?'':' AND b.family_id=?'),params:team?[]:[fid]},
         allocations:{...scoped('SELECT a.*,p.family_id FROM benefit_allocations a JOIN projects p ON p.id=a.project_id','p.family_id')},
         payments:{sql:"SELECT p.* FROM payments p WHERE p.family_id=? AND NOT EXISTS(SELECT 1 FROM cash_entries c WHERE c.source_key='payment:' || p.id AND c.voided_at IS NOT NULL) ORDER BY p.id DESC",params:[fid]},
+        // Mensalidades e anuidades recebidas no mês (só a equipe vê o total do clube).
+        membership:team&&canFinance(u)?{sql:"SELECT family_id,SUM(cents) cents,COUNT(*) n FROM cash_entries WHERE scope='club' AND kind='income' AND category='membership' AND voided_at IS NULL AND entry_date LIKE ? GROUP BY family_id",params:[period()+'-%']}:{sql:'SELECT 0 family_id,0 cents,0 n WHERE 1=0',params:[]},
         settings:{sql:'SELECT value FROM settings WHERE id=1'}
       });
       for(const p of data.projects)if(p.model_site)p.license_level=licenseLevel(p.model_license);
@@ -229,7 +231,7 @@ async function handle(req,res){
       const balances=new Map(data.families.map(f=>[f.id,computeQuota(byProject.get(f.id)||[],f.allowance,byBenefit.get(f.id)||[],byAllocation.get(f.id)||[])]));
       const families=team?data.families.map(f=>({...f,balance:balances.get(f.id),members:byMember.get(f.id)||[],participants:byDependent.get(f.id)||[]})):[];
       const queue=data.queue.map((p,i)=>({id:p.id,status:p.status,minutes:p.minutes,position:i+1,start:p.starts_at||null,end:p.ends_at||null,own:p.family_id===fid,name:team||p.family_id===fid?p.name:null,validated:team||p.family_id===fid?Boolean(p.validated_at):undefined}));
-      return json(res,{projects:data.projects,queue,config:JSON.parse(data.settings[0].value),family:fid?data.families.find(f=>f.id===fid)||null:null,balance:fid?balances.get(fid)||null:null,participants:fid?byDependent.get(fid)||[]:[],families,familyMembers:u.role==='guardian'?byMember.get(fid)||[]:[],payments:data.payments});
+      return json(res,{projects:data.projects,queue,config:JSON.parse(data.settings[0].value),family:fid?data.families.find(f=>f.id===fid)||null:null,balance:fid?balances.get(fid)||null:null,participants:fid?byDependent.get(fid)||[]:[],families,familyMembers:u.role==='guardian'?byMember.get(fid)||[]:[],payments:data.payments,membership:team&&canFinance(u)?data.membership.map(r=>({family_id:r.family_id,cents:Number(r.cents),n:Number(r.n)})):null});
     }
     if(path==='/api/participants'&&method==='POST'){if(!guardianOf(u))fail('Esta ação é exclusiva do responsável.',403);const b=await body(req);if((await all('SELECT id FROM participants WHERE family_id=?',u.family_id)).length>=20)fail('Limite de 20 participantes por família.');(await run('INSERT INTO participants(family_id,name) VALUES(?,?)',u.family_id,str(b.name,'Nome',80)));return json(res,{ok:true});}
     if(path==='/api/projects'&&method==='POST'){
