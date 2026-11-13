@@ -236,6 +236,13 @@ async function handle(req,res){
       if(method!=='POST')fail('Ação não encontrada.',404);
       const b=await body(req);
       if(!canOperate(u)&&!(u.family_id&&u.family_id===p.family_id)&&['edit','submit','file','message'].includes(action))fail('Acesso operacional necessário.',403);
+      if(action==='quotepreview'){
+        authorized(u,canOperate(u)?null:['admin']);
+        const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
+        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),bal=await familyBalance(p.family_id),rate=Math.round(m.cost*(1+c.markup/100));
+        const a=allocation(minutes,bal.available,c.extra),materialCost=Math.round(grams*rate/1000);
+        return json(res,{minutes,grams,balance:bal.available,included:a.included,extra:a.extra,extraCost:a.extraCost,extraRate:c.extra,materialRate:rate,materialCost,timeValue:Math.round(minutes*c.extra/60),creditValue:Math.round(a.included*c.extra/60),total:a.extraCost+materialCost,balanceAfter:bal.available-a.included});
+      }
       if(action==='edit'){
         if(!['draft','question','review'].includes(p.status))fail('Este projeto já tem orçamento. Peça uma nova avaliação antes de alterar.');
         const colors=(await config()).materials.filter(m=>m.active).flatMap(m=>m.colors);
