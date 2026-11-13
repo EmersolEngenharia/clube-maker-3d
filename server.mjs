@@ -213,7 +213,7 @@ async function handle(req,res){
       const team=isTeam(u),fid=u.family_id;
       const scoped=(sql,clause='family_id')=>({sql:sql+(team?'':' WHERE '+clause+'=?'),params:team?[]:[fid]});
       const data=await db.snapshot({
-        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,f.name family_name,'+modelColumns+' FROM projects p JOIN families f ON f.id=p.family_id LEFT JOIN model_links ml ON ml.project_id=p.id ORDER BY p.created DESC':'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,'+modelColumns+' FROM projects p LEFT JOIN model_links ml ON ml.project_id=p.id WHERE p.family_id=? ORDER BY p.created DESC',params:team?[]:[fid]},
+        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,(SELECT 1 FROM billing_contracts bc WHERE bc.project_id=p.id AND bc.status IN (\'creating\',\'pending\',\'needs_review\') LIMIT 1) bill_open,f.name family_name,'+modelColumns+' FROM projects p JOIN families f ON f.id=p.family_id LEFT JOIN model_links ml ON ml.project_id=p.id ORDER BY p.created DESC':'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,'+modelColumns+' FROM projects p LEFT JOIN model_links ml ON ml.project_id=p.id WHERE p.family_id=? ORDER BY p.created DESC',params:team?[]:[fid]},
         queue:{sql:"SELECT p.id,p.name,p.family_id,p.status,p.minutes,p.approved_at,s.starts_at,s.ends_at,s.validated_at FROM projects p LEFT JOIN print_slots s ON s.project_id=p.id WHERE p.status IN ('queued','printing') ORDER BY CASE p.status WHEN 'printing' THEN 0 ELSE 1 END,COALESCE(s.starts_at,p.approved_at),p.id"},
         families:scoped('SELECT * FROM families','id'),
         members:{sql:"SELECT u.id,u.name,u.email,u.role,u.family_id,t.user_id is_staff,c.whatsapp FROM users u LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE "+(team?'u.family_id IS NOT NULL':u.role==='guardian'?'u.family_id=?':'1=0'),params:!team&&u.role==='guardian'?[fid]:[]},
@@ -251,12 +251,14 @@ async function handle(req,res){
     if(path==='/api/projects/bulk'&&method==='POST'){
       const b=await body(req);authorized(u,['admin']);if(!isAdmin(u))fail('Ação exclusiva da administração.',403);
       const ids=[...new Set((Array.isArray(b.ids)?b.ids:[]).map(Number))].filter(Number.isInteger);
-      if(!['cancel','delete','finish'].includes(b.action))fail('Ação inválida.');if(!ids.length||ids.length>100)fail('Escolha de 1 a 100 pedidos.');
+      if(!['cancel','delete','finish','collect','paid'].includes(b.action))fail('Ação inválida.');if(!ids.length||ids.length>100)fail('Escolha de 1 a 100 pedidos.');
       const done=[],skipped=[];
       for(const id of ids){
         try{await tx(async()=>{const p=await one('SELECT * FROM projects WHERE id=?',id);if(!p)fail('Pedido não encontrado.',404);
           if(b.action==='cancel'){if(!['draft','review','question','approval','queued'].includes(p.status))fail('Após iniciar a impressão, só pela tela do pedido.');await cancelProject(p,u);}
           else if(b.action==='finish'){if(p.status!=='queued')fail('Só pedidos que estão na fila.');await finishProject(p,u,Math.max(1,p.minutes),Math.max(0.1,p.grams),'Pedido finalizado pela equipe com o consumo orçado (impresso fora do fluxo da máquina). Peça pronta para retirar.');}
+          else if(b.action==='collect'){if(p.status!=='ready')fail('A peça ainda não está pronta para retirar.');await run("UPDATE projects SET status='completed',updated=? WHERE id=?",now(),id);await event(id,'Retirada confirmada. Projeto concluído!');}
+          else if(b.action==='paid'){if(!['ready','completed'].includes(p.status))fail('Registre o pagamento após a conclusão da impressão.');await operations.recordProject(p,u);await run('UPDATE projects SET paid=1 WHERE id=?',id);await event(id,'Pagamento do projeto registrado pela equipe.');await schedule.onManualPaid(p,u);}
           else await deleteProject(p);
         });done.push(id);}catch(e){skipped.push({id,reason:e.message||'Não foi possível.'});}
       }
