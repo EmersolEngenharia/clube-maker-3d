@@ -251,12 +251,14 @@ async function handle(req,res){
     if(path==='/api/projects/bulk'&&method==='POST'){
       const b=await body(req);authorized(u,['admin']);if(!isAdmin(u))fail('Ação exclusiva da administração.',403);
       const ids=[...new Set((Array.isArray(b.ids)?b.ids:[]).map(Number))].filter(Number.isInteger);
-      if(!['cancel','delete','finish'].includes(b.action))fail('Ação inválida.');if(!ids.length||ids.length>100)fail('Escolha de 1 a 100 pedidos.');
+      if(!['cancel','delete','finish','collect','paid'].includes(b.action))fail('Ação inválida.');if(!ids.length||ids.length>100)fail('Escolha de 1 a 100 pedidos.');
       const done=[],skipped=[];
       for(const id of ids){
         try{await tx(async()=>{const p=await one('SELECT * FROM projects WHERE id=?',id);if(!p)fail('Pedido não encontrado.',404);
           if(b.action==='cancel'){if(!['draft','review','question','approval','queued'].includes(p.status))fail('Após iniciar a impressão, só pela tela do pedido.');await cancelProject(p,u);}
           else if(b.action==='finish'){if(p.status!=='queued')fail('Só pedidos que estão na fila.');await finishProject(p,u,Math.max(1,p.minutes),Math.max(0.1,p.grams),'Pedido finalizado pela equipe com o consumo orçado (impresso fora do fluxo da máquina). Peça pronta para retirar.');}
+          else if(b.action==='collect'){if(p.status!=='ready')fail('A peça ainda não está pronta para retirar.');await run("UPDATE projects SET status='completed',updated=? WHERE id=?",now(),id);await event(id,'Retirada confirmada. Projeto concluído!');}
+          else if(b.action==='paid'){if(!['ready','completed'].includes(p.status))fail('Registre o pagamento após a conclusão da impressão.');await operations.recordProject(p,u);await run('UPDATE projects SET paid=1 WHERE id=?',id);await event(id,'Pagamento do projeto registrado pela equipe.');await schedule.onManualPaid(p,u);}
           else await deleteProject(p);
         });done.push(id);}catch(e){skipped.push({id,reason:e.message||'Não foi possível.'});}
       }
