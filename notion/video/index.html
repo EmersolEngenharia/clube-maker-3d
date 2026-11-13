@@ -16,6 +16,7 @@ img{display:block;user-select:none}
 .mask{overflow:hidden}
 </style></head><body>
 <div id="stage"></div>
+<script src="timing.js"></script>
 <script>
 /* ---------- parâmetros ---------- */
 const Q=new URLSearchParams(location.search),FMT=Q.get('fmt')||'h';
@@ -83,7 +84,7 @@ const c2tag={},c2cap={};for(const k in cap2){c2tag[k]=chip(cap2[k][0],cap2[k][1]
 /* B6 – passo 3 */
 const b6=badge(3,'Detalhes da peça'),s3Card=cardImg('s3-card',V?940:1040);
 const q6=[['Tamanho',C.tur,'#0d3b40'],['Cor',C.flame,'#fff'],['Quantidade',C.sun,C.navy]].map(([s,c,f])=>chip(s,c,f,V?44:42));
-const help6=text('Não sabe? Escolha <span style="color:#a63c30">“Quero ajuda”.</span>',{size:V?64:62,weight:800,ls:-.02});
+const help6=text('Não sabe?<br>Escolha <span style="color:#a63c30">“Quero ajuda”.</span>',{size:V?64:50,weight:800,ls:-.02,css:{lineHeight:1.12}});
 /* B7 – passo 4 */
 const b7=badge(4,'Revisar e enviar'),s4Card=cardImg('s4-card',V?940:940);
 const nohi=mk('div',{css:{border:'6px solid '+C.red,borderRadius:'22px',background:'#a63c3014'}});
@@ -104,7 +105,7 @@ const prog=mk('div',{css:{height:(10*U)+'px',background:C.red,borderRadius:'8px'
 const progBg=mk('div',{css:{height:(10*U)+'px',background:'#a63c3026',borderRadius:'8px',width:(W-2*60*U)+'px'}});
 /* ================= TIMELINE ================= */
 const BEATS={hook:0,title:2.6,p1:5.0,cont:11.6,p2:13.4,p3:19.6,p4:23.0,end:26.6,dur:30};
-function seek(t){
+function seekAnim(t){
  // reset: oculta tudo
  for(const e of stage.children){if(e!==bg&&e!==dots)e.style.display='none'}
  /* fundo */
@@ -245,7 +246,7 @@ function seek(t){
   const pos=V?[[CX-260,H*.60],[CX+250,H*.60],[CX,H*.69]]:[[W*.34-330,H*.84],[W*.34+60,H*.84],[W*.34+400,H*.84]];
   q6.forEach((c,i)=>{const s=1.0+i*.35,a=E.back(pr(k,s,s+.4));
    put(c,{x:V?[CX-250,CX+250,CX][i]:[W*.73,W*.73,W*.73][i],y:V?[H*.69,H*.69,H*.755][i]:[H*.33+i*0,H*.33,H*.33][i]+i*(V?0:130),o:pr(k,s,s+.1)*(1-out),s:mix(.5,1,a),r:(i-1)*3})});
-  put(help6,{x:V?CX:W*.73,y:V?H*.85:H*.74,o:pr(k,2.1,2.5)*(1-out),s:mix(.9,1,E.out(pr(k,2.1,2.6)))});
+  put(help6,{x:V?CX:W*.765,y:V?H*.85:H*.76,o:pr(k,2.1,2.5)*(1-out),s:mix(.9,1,E.out(pr(k,2.1,2.6)))});
  }
  /* ---------- B7 PASSO 4 (23.0–26.6) ---------- */
  if(t>=BEATS.p4-.05&&t<BEATS.end+.6){
@@ -299,7 +300,12 @@ function seek(t){
   put(slog,{x:CX,y:V?H*.72:H*.79,o:pr(k,2.45,2.9),s:1});
  }
 }
-window.seek=seek;window.DURATION=BEATS.dur;window.BEATS=BEATS;
+/* tempo real (acompanha a narração) -> tempo da animação */
+function warp(T){const o=TIMING.orig,n=TIMING.ns;let i=0;while(i<o.length-2&&T>=n[i+1])i++;
+ const u=T-n[i],oL=o[i+1]-o[i],nL=n[i+1]-n[i],st=Math.min(nL/oL,1.7),play=oL*st;
+ const lo=u<play?u/st:Math.min(oL-.25+(u-play)*.04,oL-.02);return o[i]+Math.min(lo,oL-.001)}
+function seekReal(T){seekAnim(warp(T))}
+window.seek=seekReal;window.DURATION=TIMING.ns[TIMING.ns.length-1];window.BEATS=BEATS;
 document.fonts.ready.then(()=>{window.READY=true});
-seek(0);
+seekReal(0);
 </script></body></html>
