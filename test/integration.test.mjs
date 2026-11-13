@@ -87,5 +87,16 @@ test('ciclo completo e fronteiras de segurança do clube',async t=>{
   await req(jar,'/logout',{});assert.equal((await req(jar,'/session')).user,null);
   await anonymous('/login',{email:`dependente-${bia.participantId}@maker3d.invalid`,password:pass},401);
  });
+ await t.test('ações em massa: finalizar impressos na fila, cancelar e excluir com travas',async()=>{
+  const queued=async()=>{const p=await create();await admin(`/projects/${p.id}/quote`,{minutes:30,grams:5,material:'PLA',note:'Teste em massa.'});await approve(p.id);return p;};
+  const a=await queued(),c=await queued(),d=await queued(),b=await create();
+  await guardian('/projects/bulk',{action:'cancel',ids:[b.id]},403);await admin('/projects/bulk',{action:'nada',ids:[b.id]},400);await admin('/projects/bulk',{action:'cancel',ids:[]},400);
+  let r=await admin('/projects/bulk',{action:'finish',ids:[a.id,b.id]});assert.deepEqual(r.done,[a.id]);assert.equal(r.skipped[0].id,b.id);
+  assert.equal((await admin(`/projects/${a.id}`)).status,'ready');
+  await admin(`/projects/${d.id}/finish`,{minutes:25,grams:4});assert.equal((await admin(`/projects/${d.id}`)).status,'ready');
+  r=await admin('/projects/bulk',{action:'cancel',ids:[c.id,a.id]});assert.deepEqual(r.done,[c.id]);assert.equal(r.skipped[0].id,a.id);
+  r=await admin('/projects/bulk',{action:'delete',ids:[b.id,c.id,a.id]});assert.deepEqual(r.done.sort(),[b.id,c.id].sort());assert.equal(r.skipped[0].id,a.id);
+  await admin(`/projects/${b.id}`,undefined,404);assert.equal((await admin(`/projects/${a.id}`)).status,'ready');
+ });
  await t.test('origem externa rejeitada e saída encerra sessão',async()=>{await guardian('/participants',{name:'Intruso'},403,{Origin:'https://untrusted.example'});await guardian('/logout',{});await guardian('/dashboard',undefined,401);});
 });
