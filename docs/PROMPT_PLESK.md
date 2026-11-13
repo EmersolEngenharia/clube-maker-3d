@@ -123,10 +123,10 @@ Configuração validada: Nginx gerado pelo Plesk recebe HTTPS e encaminha ao Apa
 ProxyPreserveHost On
 ProxyPass / http://127.0.0.1:3183/ connectiontimeout=5 timeout=60
 ProxyPassReverse / http://127.0.0.1:3183/
-LimitRequestBody 15728640
+LimitRequestBody 37748736
 ```
 
-O limite de 15 MiB acomoda arquivos de 10 MiB enviados em base64. Não copie deploy/nginx-http.conf sobre arquivos gerados pelo Plesk e não duplique location /.
+O limite de 36 MiB acomoda modelos STL/3MF de até 25 MiB enviados em base64 (o servidor só aceita corpo grande na rota de arquivo do projeto; as demais rotas param em 15 MiB). Não copie deploy/nginx-http.conf sobre arquivos gerados pelo Plesk e não duplique location /.
 
 Se precisar alterar as diretivas, faça backup específico e confira as opções da versão instalada. Nesta implantação, a regeneração sem recarga e os testes foram:
 
