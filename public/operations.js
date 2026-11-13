@@ -47,7 +47,7 @@ async function paymentEditor(fid,initial={}){
 }
 function updatePaymentSummary(){const f=$('#payment-preview-form');if(!f)return;const gross=Math.round(Number(f.elements.gross.value)*100),discount=f.elements.waiver.checked?gross:Math.min(gross,Number(f.elements.coupon.selectedOptions[0]?.dataset.value||0));f.elements.coupon.disabled=f.elements.waiver.checked;f.elements.reason.required=f.elements.waiver.checked;$('#payment-live').innerHTML=`<div><span>Valor original</span><strong>${money(gross)}</strong></div><div><span>Desconto</span><strong>${money(discount)}</strong></div><div class="total"><span>Valor a receber</span><strong>${money(Math.max(0,gross-discount))}</strong></div>`;}
 function cashCategoryOptions(scope,kind){const choices=scope==='club'?{investment:['capital'],income:['other_income'],expense:['equipment','maintenance','rent','energy','services','other_expense']}:{income:['sales','allowance','gift','other_income'],expense:['supplies','shipping','purchase','other_expense']};return choices[kind].map(v=>`<option value="${v}">${financeCategories[v]}</option>`).join('');}
-async function operationAction(action,target){if(await billingAction(action,target))return true;switch(action){
+async function operationAction(action,target){if(await billingAction(action,target))return true;if(await paAction(action,target))return true;switch(action){
  case'finance-clear':state.financeView[state.finance.scope]={search:'',kind:'all',category:'all',participant:'all',status:'active',sort:'date_desc',page:1};render();return true;
  case'finance-page':financeView().page=Number(target.dataset.page);updateFinanceList();return true;
  case'finance-category':Object.assign(financeView(),{kind:'expense',category:target.dataset.category,page:1});render();return true;
@@ -139,3 +139,108 @@ function benefitKindChanged(form){
 }
 // Máscara dd/mm/aaaa enquanto digita.
 document.addEventListener('input',e=>{if(!e.target.classList?.contains('date-br'))return;const d=e.target.value.replace(/\D/g,'').slice(0,8);e.target.value=[d.slice(0,2),d.slice(2,4),d.slice(4)].filter(Boolean).join('/');});
+
+// ---- Pedidos da equipe: busca, filtros, ordem e ações em massa ----
+const paOrder=['draft','review','question','approval','queued','printing','ready','completed','cancelled','failed'];
+const paState=()=>state.pa??={q:'',status:'',family:'',sort:'updated',dir:'desc',sel:new Set()};
+const paNorm=v=>String(v??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+const paNumber=p=>'#'+String(p.id).padStart(3,'0');
+function paRows(){
+ const f=paState(),q=paNorm(f.q).trim(),keys={updated:p=>p.updated,id:p=>p.id,name:p=>paNorm(p.name),family:p=>paNorm(p.family_name||p.participant),status:p=>paOrder.indexOf(p.status)},key=keys[f.sort]||keys.updated,dir=f.dir==='asc'?1:-1;
+ return projectsBase().filter(p=>(!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!q||paNorm(`${p.name} ${p.family_name||''} ${p.participant||''} ${paNumber(p)} ${p.id}`).includes(q))).sort((a,b)=>{const x=key(a),y=key(b);return ((x<y?-1:x>y?1:0)*dir)||(b.id-a.id);});
+}
+function adminProjectsPage(){
+ const f=paState(),families=state.data.families||[];
+ const sorts=[['updated','desc','Atualizados há menos tempo'],['updated','asc','Atualizados há mais tempo'],['id','desc','Número (maior primeiro)'],['id','asc','Número (menor primeiro)'],['name','asc','Nome (A–Z)'],['family','asc','Família (A–Z)'],['status','asc','Etapa']];
+ return `<div class="pa-tools"><label class="pa-search">Buscar<input id="pa-q" type="search" placeholder="Nome, família, participante ou número" value="${esc(f.q)}" autocomplete="off"></label>
+ <label>Etapa<select id="pa-status"><option value="">Todas</option>${paOrder.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${esc(labels[s])}</option>`).join('')}</select></label>
+ <label>Família<select id="pa-family"><option value="">Todas</option>${families.map(x=>`<option value="${x.id}" ${f.family===String(x.id)?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label>
+ <label>Ordenar por<select id="pa-sort">${sorts.map(([k,d,l])=>`<option value="${k}:${d}" ${f.sort===k&&f.dir===d?'selected':''}>${l}</option>`).join('')}</select></label></div>
+ <div id="pa-list">${paListHtml()}</div>`;
+}
+function paListHtml(){
+ const f=paState(),rows=paRows(),visible=new Set(rows.map(p=>p.id));for(const id of [...f.sel])if(!visible.has(id))f.sel.delete(id);
+ const arrow=k=>f.sort===k?(f.dir==='asc'?' ▲':' ▼'):'',th=(k,l)=>`<th><button type="button" class="text-btn pa-th" data-action="pa-sort" data-sort="${k}">${l}${arrow(k)}</button></th>`;
+ const selected=rows.filter(p=>f.sel.has(p.id)),filtered=Boolean(f.q||f.status||f.family);
+ const bulk=adminUser()?`<div class="pa-bulk ${selected.length?'on':''}" role="region" aria-label="Ações em massa"><strong>${selected.length?`${selected.length} selecionado${selected.length>1?'s':''}`:'Marque pedidos na lista para agir em vários de uma vez'}</strong>${selected.length?`<span class="row">${btn('Finalizar (já impressos)','pa-bulk','secondary small','data-do="finish"')}${btn('Cancelar','pa-bulk','secondary small','data-do="cancel"')}${btn('Excluir','pa-bulk','secondary small danger','data-do="delete"')}${btn('Limpar seleção','pa-sel-clear','secondary small')}</span>`:''}</div>`:'';
+ const body=rows.length?`<div class="card table-wrap"><table class="pa-table"><thead><tr>${adminUser()?`<th class="pa-check-col"><input type="checkbox" id="pa-all" aria-label="Marcar todos os pedidos da lista" ${selected.length&&selected.length===rows.length?'checked':''}></th>`:''}${th('name','Projeto')}${th('family','Família / participante')}${th('status','Etapa')}${th('updated','Atualizado')}<th></th></tr></thead><tbody>${rows.map(p=>`<tr class="${f.sel.has(p.id)?'selected':''}">${adminUser()?`<td class="pa-check-col"><input type="checkbox" class="pa-check" data-id="${p.id}" aria-label="Marcar ${esc(p.name)}" ${f.sel.has(p.id)?'checked':''}></td>`:''}<td><div class="row-model">${p.model_site?modelThumb(Number(p.model_image)?`/api/model-image/${p.id}`:null):''}<div><strong>${esc(p.name)}</strong><br><small>${paNumber(p)}${p.model_site?' · '+esc(siteNames[p.model_site]||'Link externo'):''}</small>${p.model_site&&licensePending(p)&&!['completed','cancelled'].includes(p.status)?'<br><span class="license-chip warn">Licença a conferir</span>':''}</div></div></td><td>${esc(p.family_name||p.participant)}</td><td>${badge(p.status)}</td><td>${date(p.updated)}</td><td><button class="text-btn" data-project="${p.id}">Abrir ${icon('arrow')}</button></td></tr>`).join('')}</tbody></table></div>`:empty(filtered?'Nenhum pedido com esses filtros':'Nenhum projeto nesta lista',filtered?'Ajuste a busca ou limpe os filtros para ver mais pedidos.':'Quando uma ideia chegar por aqui, você poderá acompanhar cada etapa.',filtered?btn('Limpar filtros','pa-clear','secondary'):'');
+ return `<p class="pa-count" aria-live="polite">${rows.length} de ${state.data.projects.length} pedido${state.data.projects.length>1?'s':''}${filtered?` · ${btn('Limpar filtros','pa-clear','secondary small')}`:''}</p>${bulk}${body}`;
+}
+const paRefresh=()=>{const el=$('#pa-list');if(el)el.innerHTML=paListHtml();};
+const paText={
+ finish:{title:'Finalizar pedidos já impressos',verb:'Finalizar',note:'Só vale para pedidos que estão na fila. Cada um vira "Pronto para retirar" com o tempo e o filamento orçados, a família é avisada no WhatsApp, o filamento sai do estoque e o PIX do valor segue as regras de cobrança. Se o consumo real foi outro, finalize pelo pedido, informando os valores.'},
+ cancel:{title:'Cancelar pedidos',verb:'Cancelar pedidos',note:'Cancela sem cobrança e libera as horas reservadas. Pedidos já em impressão ou concluídos não são cancelados por aqui.'},
+ delete:{title:'Excluir pedidos',verb:'Excluir definitivamente',note:'Apaga o pedido, as mensagens e os arquivos. Só pedidos que nunca foram impressos nem cobrados: os demais ficam no histórico. Não dá para desfazer.'}
+};
+async function paAction(action,target){
+ const f=paState();
+ switch(action){
+  case'pa-sort':{const k=target.dataset.sort;if(f.sort===k)f.dir=f.dir==='asc'?'desc':'asc';else{f.sort=k;f.dir=k==='updated'||k==='id'?'desc':'asc';}render();return true;}
+  case'pa-clear':f.q='';f.status='';f.family='';render();return true;
+  case'pa-sel-clear':f.sel.clear();paRefresh();return true;
+  case'pa-bulk':{
+   const kind=target.dataset.do,t=paText[kind],picked=paRows().filter(p=>f.sel.has(p.id));
+   modal(t.title,`<div class="stack"><p><strong>${picked.length} pedido${picked.length>1?'s':''}:</strong></p><ul class="pa-picked">${picked.slice(0,12).map(p=>`<li>${paNumber(p)} · ${esc(p.name)} <small>(${esc(labels[p.status])})</small></li>`).join('')}${picked.length>12?`<li>e mais ${picked.length-12}…</li>`:''}</ul><p>${t.note}</p>${btn(t.verb,'pa-confirm','',`data-do="${kind}"`)}</div>`);return true;
+  }
+  case'pa-confirm':{
+   const kind=target.dataset.do,ids=[...f.sel];target.disabled=true;
+   const r=await api('/projects/bulk',{action:kind,ids});
+   for(const id of r.done)f.sel.delete(id);close();await refresh();
+   const words={finish:'finalizado',cancel:'cancelado',delete:'excluído'},w=words[kind];
+   if(r.skipped.length){const byId=new Map(state.data.projects.map(p=>[p.id,p]));modal('Resultado',`<div class="stack"><p>${r.done.length?`${r.done.length} pedido${r.done.length>1?'s':''} ${w}${r.done.length>1?'s':''}.`:'Nenhum pedido foi alterado.'} ${r.skipped.length} ${r.skipped.length>1?'ficaram':'ficou'} de fora:</p><ul class="pa-picked">${r.skipped.map(s=>`<li>#${String(s.id).padStart(3,'0')}${byId.get(s.id)?' · '+esc(byId.get(s.id).name):''}: ${esc(s.reason)}</li>`).join('')}</ul></div>`);}
+   else toast(`${r.done.length} pedido${r.done.length>1?'s':''} ${w}${r.done.length>1?'s':''}.`);
+   return true;
+  }
+ }
+ return false;
+}
+document.addEventListener('input',e=>{if(e.target.id==='pa-q'){paState().q=e.target.value;paRefresh();}});
+document.addEventListener('change',e=>{
+ const t=e.target,f=paState();
+ if(t.id==='pa-status'){f.status=t.value;paRefresh();}
+ else if(t.id==='pa-family'){f.family=t.value;paRefresh();}
+ else if(t.id==='pa-sort'){[f.sort,f.dir]=t.value.split(':');paRefresh();}
+ else if(t.id==='pa-all'){for(const p of paRows())t.checked?f.sel.add(p.id):f.sel.delete(p.id);paRefresh();}
+ else if(t.classList?.contains('pa-check')){const id=Number(t.dataset.id);t.checked?f.sel.add(id):f.sel.delete(id);paRefresh();}
+});
+
+// ---- Visão geral da equipe: o mês inteiro numa tela só ----
+const ovColors=['#13c4d0','#ff6328','#ffcf54','#7c8cff','#4ade80','#e879f9','#38bdf8','#f472b6','#a3e635','#94a3b8'];
+const ovH=m=>`${Number((m/60).toFixed(1)).toLocaleString('pt-BR')} h`,ovG=g=>`${Number(Number(g).toFixed(1)).toLocaleString('pt-BR')} g`;
+const ovShort=n=>String(n).replace(/^Fam[ií]lia\s+/i,'');
+function ovData(){
+ const fs=state.data.families,ps=state.data.projects,per=fs.find(f=>f.balance)?.balance.period||new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit'}).format(new Date()).slice(0,7);
+ const fam=fs.map(f=>{const b=f.balance||{};return {id:f.id,name:f.name,used:b.used||0,held:b.held||0,base:f.allowance||b.baseAllowance||0,extraMinutes:b.extraMinutes||0,extraCost:b.extraCost||0,materialCost:b.materialCost||0,grams:b.grams||0};}).sort((a,b)=>(b.used+b.held)-(a.used+a.held)||a.name.localeCompare(b.name));
+ fam.forEach((f,i)=>f.color=ovColors[i%ovColors.length]);
+ const sum=k=>fam.reduce((n,f)=>n+f[k],0),open=ps.filter(p=>p.period===per&&['queued','printing'].includes(p.status));
+ const pending={minutes:open.reduce((n,p)=>n+Math.max(0,p.minutes-p.included),0),hoursCost:open.reduce((n,p)=>n+Math.round(Math.max(0,p.minutes-p.included)*p.extra_rate/60),0),grams:open.reduce((n,p)=>n+p.grams,0),materialCost:open.reduce((n,p)=>n+Math.round(p.grams*p.material_rate/1000),0)};
+ const count=s=>ps.filter(p=>s.includes(p.status)).length;
+ return {per,fam,ps,pending,count,used:sum('used'),held:sum('held'),base:sum('base'),extraMinutes:sum('extraMinutes'),extraCost:sum('extraCost'),materialCost:sum('materialCost'),grams:sum('grams')};
+}
+function ovDonut(slices,center,sub){
+ const total=slices.reduce((n,s)=>n+s.value,0);if(!total)return '';
+ let off=25;
+ return `<svg viewBox="0 0 42 42" class="ov-donut" role="img" aria-label="${esc(center)} ${esc(sub)}"><circle cx="21" cy="21" r="15.9155" fill="none" stroke="var(--border)" stroke-width="6"/>${slices.filter(s=>s.value>0).map(s=>{const pct=s.value/total*100,el=`<circle cx="21" cy="21" r="15.9155" fill="none" stroke="${s.color}" stroke-width="6" stroke-dasharray="${pct.toFixed(3)} ${(100-pct).toFixed(3)}" stroke-dashoffset="${off.toFixed(3)}"><title>${esc(s.label)}: ${esc(s.text)}</title></circle>`;off-=pct;return el;}).join('')}<text x="21" y="21.6" text-anchor="middle" class="ov-donut-v">${esc(center)}</text><text x="21" y="26.4" text-anchor="middle" class="ov-donut-s">${esc(sub)}</text></svg>`;
+}
+const ovLegend=slices=>`<ul class="ov-legend">${slices.map(s=>`<li><svg class="ov-sw" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="${s.color}"/></svg><span>${esc(s.label)}</span><b>${esc(s.text)}</b></li>`).join('')}</ul>`;
+function ovWhen(q){if(!q.start)return 'sem horário';const d=new Date(q.start);return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+function adminOverview(){
+ const d=ovData(),month=new Date(d.per+'-15T12:00:00').toLocaleDateString('pt-BR',{month:'long',year:'numeric'}),fams=new Map(state.data.projects.map(p=>[p.id,p.family_name||p.participant]));
+ const used=d.fam.filter(f=>f.used+f.held>0),usedTotal=d.used+d.held;
+ const kpi=(label,value,sub,nav)=>`<button class="ov-kpi" ${nav?`data-nav="${nav}"`:'type="button" tabindex="-1"'}><span>${label}</span><strong>${value}</strong><small>${sub}</small></button>`;
+ const revenue=d.extraCost+d.materialCost,forecast=d.pending.hoursCost+d.pending.materialCost;
+ const pie=used.map(f=>({label:ovShort(f.name),value:f.used+f.held,color:f.color,text:`${ovH(f.used+f.held)} · ${Math.round((f.used+f.held)/usedTotal*100)}%`}));
+ const scale=Math.max(1,...d.fam.map(f=>Math.max(f.base,f.used+f.held)));
+ const bars=d.fam.map(f=>{const w=v=>(v/scale*100).toFixed(2),over=f.used+f.held>f.base;return `<div class="ov-bar"><span class="ov-bar-name" title="${esc(f.name)}">${esc(ovShort(f.name))}</span><svg class="ov-bar-track" viewBox="0 0 100 10" preserveAspectRatio="none" role="img" aria-label="${esc(f.name)}: ${ovH(f.used)} usadas, ${ovH(f.held)} reservadas, franquia de ${ovH(f.base)}"><rect width="100" height="10" class="ov-track"/><rect width="${w(f.used)}" height="10" fill="${f.color}"/><rect x="${w(f.used)}" width="${w(f.held)}" height="10" fill="${f.color}" opacity=".45"/><rect x="0" y="0" width="${w(f.base)}" height="10" class="ov-frame" vector-effect="non-scaling-stroke"/></svg><b class="${over?'ov-over':''}">${ovH(f.used+f.held)} <small>/ ${ovH(f.base)}</small></b></div>`;}).join('');
+ const money$=v=>money(v);
+ const rev=[{label:'Horas extras',value:d.extraCost,color:ovColors[0],text:money$(d.extraCost)},{label:'Filamento',value:d.materialCost,color:ovColors[1],text:money$(d.materialCost)}];
+ const fresh=state.data.projects.filter(p=>['review','question','failed'].includes(p.status)).sort((a,b)=>String(b.created).localeCompare(String(a.created)));
+ const queue=(state.data.queue||[]);
+ return `<div class="ov"><div class="ov-head"><div><div class="eyebrow">VISÃO GERAL</div><h1>${month.charAt(0).toUpperCase()+month.slice(1)}</h1></div><div class="row"><button class="btn secondary small" data-nav="projects">Ver pedidos</button>${btn('Cadastrar família','family-new','secondary small')}</div></div>
+ <div class="ov-kpis">${kpi('Pedidos novos',d.count(['review','failed']),`${d.count(['question'])} aguardando a família`,'projects')}${kpi('Aguardando aprovação',d.count(['approval']),'orçamento enviado','projects')}${kpi('Na fila de impressão',d.count(['queued','printing']),`${d.count(['printing'])} imprimindo agora`,'queue')}${kpi('Prontos para retirar',d.count(['ready']),'aguardando a família','projects')}${kpi('Horas usadas no mês',ovH(usedTotal),`de ${ovH(d.base)} de franquia`,'')}${kpi('Faturamento do mês',money(revenue),forecast?`+ ${money(forecast)} previstos na fila`:'horas extras + filamento','')}</div>
+ <section class="ov-card ov-pie"><h2>Horas por família</h2>${pie.length?`<div class="ov-pie-body">${ovDonut(pie,ovH(usedTotal),'no mês')}${ovLegend(pie)}</div>`:'<p class="muted">Nenhuma hora usada neste mês ainda.</p>'}</section>
+ <section class="ov-card ov-bars"><h2>Uso da franquia</h2><p class="ov-note">cheio: usadas · claro: reservadas na fila · contorno: franquia do mês</p><div class="ov-bars-body">${bars||'<p class="muted">Nenhuma família cadastrada.</p>'}</div></section>
+ <section class="ov-card ov-rev"><h2>Faturamento do mês</h2>${revenue?`<div class="ov-pie-body">${ovDonut(rev,money(revenue),'realizado')}${ovLegend(rev)}</div>`:'<p class="muted ov-nothing">Ainda sem valores cobrados neste mês.</p>'}<table class="ov-rev-table"><thead><tr><th></th><th>Quantidade</th><th>Valor</th></tr></thead><tbody><tr><td>Horas extras</td><td>${ovH(d.extraMinutes)}</td><td>${money(d.extraCost)}</td></tr><tr><td>Filamento</td><td>${ovG(d.grams)}</td><td>${money(d.materialCost)}</td></tr><tr class="total"><td>Realizado</td><td></td><td>${money(revenue)}</td></tr><tr class="forecast"><td>Previsto na fila</td><td>${ovG(d.pending.grams)} · ${ovH(d.pending.minutes)} extras</td><td>${money(forecast)}</td></tr></tbody></table></section>
+ <section class="ov-card ov-new"><div class="ov-card-head"><h2>Pedidos novos abertos</h2><button class="text-btn" data-nav="projects">Todos ${icon('arrow')}</button></div><div class="ov-list">${fresh.length?fresh.slice(0,8).map(p=>`<button class="ov-row" data-project="${p.id}"><span><b>${esc(p.name)}</b><small>#${String(p.id).padStart(3,'0')} · ${esc(p.family_name||p.participant)}</small></span>${badge(p.status)}<em>${date(p.created)}</em></button>`).join(''):'<p class="muted">Nenhum pedido novo. Tudo em dia.</p>'}</div></section>
+ <section class="ov-card ov-queue"><div class="ov-card-head"><h2>Fila de impressão</h2><button class="text-btn" data-nav="queue">Produção ${icon('arrow')}</button></div><div class="ov-list">${queue.length?queue.slice(0,8).map((q,i)=>`<button class="ov-row" data-project="${q.id}"><span><b>${q.position||i+1}. ${esc(q.name||'Pedido #'+String(q.id).padStart(3,'0'))}</b><small>${esc(fams.get(q.id)||'')} · ${hours(q.minutes)}</small></span>${badge(q.status)}<em>${ovWhen(q)}</em></button>`).join(''):'<p class="muted">Nada na fila de impressão.</p>'}</div></section></div>`;
+}
