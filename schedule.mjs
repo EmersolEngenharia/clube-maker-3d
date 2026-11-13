@@ -7,7 +7,7 @@ import {whatsappNumber} from './messaging/evolution.mjs';
 // Printer calendar. Every approved order holds one time slot; members book their own slot and the team validates it.
 // Times are stored in UTC. The club works in America/Sao_Paulo, which has had a fixed -03:00 offset since 2019.
 const OFFSET=-180,MIN=60000;
-export const scheduleDefaults={open:'08:00',close:'18:00',days:[1,2,3,4,5],buffer:15,lead:60,horizon:30,maxMinutes:2880,maxActive:3,lowStockGrams:200,minCharge:500,chargeWhen:'finish',teamWhatsapp:[],pickupDays:3,pickupPlace:'Emersol, em Itumbiara'};
+export const scheduleDefaults={open:'08:00',close:'18:00',days:[1,2,3,4,5],buffer:15,lead:60,horizon:30,maxMinutes:2880,maxActive:3,lowStockGrams:200,minCharge:500,chargeWhen:'approval',teamWhatsapp:[],pickupDays:3,pickupPlace:'Emersol, em Itumbiara'};
 const hm=s=>{const [h,m]=s.split(':').map(Number);return h*60+m;};
 const local=d=>new Date(new Date(d).getTime()+OFFSET*MIN);
 export const fromLocal=(day,minutes=0)=>new Date(Date.parse(day+'T00:00:00Z')+(minutes-OFFSET)*MIN);
@@ -63,7 +63,7 @@ export function cleanSettings(b,fail){
  const time=(v,label)=>{if(typeof v!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(v))fail(`${label}: use o formato HH:MM.`);return v;},int=(v,label,min,max)=>{if(!Number.isInteger(v)||v<min||v>max)fail(`${label}: valor inválido.`);return v;};
  const open=time(b.open,'Abertura'),close=time(b.close,'Fechamento');if(hm(close)<=hm(open))fail('O fechamento deve ser depois da abertura.');
  if(!Array.isArray(b.days)||!b.days.length||b.days.some(d=>!Number.isInteger(d)||d<0||d>6))fail('Escolha os dias de funcionamento.');
- if(!['finish','validation'].includes(b.chargeWhen))fail('Momento da cobrança inválido.');
+ if(!['approval','finish','validation'].includes(b.chargeWhen))fail('Momento da cobrança inválido.');
  const numbers=(Array.isArray(b.teamWhatsapp)?b.teamWhatsapp:[]).map(n=>{const v=whatsappNumber(n);if(!v)fail('WhatsApp da equipe inválido: use celular com DDD.');return v;});
  if(numbers.length>5)fail('Informe até cinco números da equipe.');
  const place=typeof b.pickupPlace==='string'&&b.pickupPlace.trim()?b.pickupPlace.trim().slice(0,120):scheduleDefaults.pickupPlace;
@@ -362,7 +362,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const cfg=await db.withRequest(()=>settings());
   const rows=await db.withRequest(()=>all("SELECT p.*,s.charged_cents,s.validated_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.charge>0 AND s.charge_error IS NULL AND p.status IN ('queued','printing','ready','completed') ORDER BY p.id"));
   for(const p of rows){try{
-   if(['queued','printing'].includes(p.status)&&!(cfg.chargeWhen==='validation'&&p.validated_at))continue;
+   if(['queued','printing'].includes(p.status)&&cfg.chargeWhen!=='approval'&&!(cfg.chargeWhen==='validation'&&p.validated_at))continue;
    const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)})),due=p.charge-state.got;
    let g=null;const actor=async()=>{g=g||await primary(p.family_id);return g?{id:g.id,name:g.name,email:g.email,role:'guardian',family_id:p.family_id}:null;};
    if(state.pending){
