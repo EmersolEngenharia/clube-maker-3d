@@ -98,7 +98,7 @@ const arrows=[0,1,2].map(()=>mk('div',{html:'<svg width="70" height="40" viewBox
 const logoCard=mk('div',{css:{background:'#fff',borderRadius:40*U+'px',padding:(36*U)+'px '+(56*U)+'px',boxShadow:'0 30px 90px #00000055'}});
 const logoImg=img(A+'brand/logo-lockup@3x.png',(V?760:820)*U,{});logoCard.appendChild(logoImg);logoImg.style.position='static';logoImg.style.transform='none';
 const urlTxt=text('maker3d.emersol.ai',{size:V?92:104,color:'#fff'});
-const slog=text('Imagine. Crie. Imprima.',{size:V?58:58,color:C.sun,weight:800,ls:-.02});
+const slog=text('<span>Imagine.</span> <span>Crie.</span> <span>Imprima.</span>',{size:V?64:62,color:C.sun,weight:800,ls:-.02});
 const tFinal=text('Seu pedido em<br>4 passos simples.',{size:V?120:124,color:'#fff',css:{lineHeight:1.02}});
 /* linha de progresso (cola em todas as cenas de passo) */
 const prog=mk('div',{css:{height:(10*U)+'px',background:C.red,borderRadius:'8px',transformOrigin:'0 50%'}});
@@ -289,15 +289,15 @@ function seekAnim(t){
   const pos=V?[[CX,H*.14],[CX,H*.26],[CX,H*.38],[CX,H*.50]]:[[W*.14,H*.2],[W*.38,H*.2],[W*.62,H*.2],[W*.86,H*.2]];
   const ap=V?[[CX,H*.20],[CX,H*.32],[CX,H*.44]]:[[W*.26,H*.2],[W*.50,H*.2],[W*.74,H*.2]];
   const fo=pr(k,1.55,1.95);
-  flow.forEach((f,i)=>{const a=E.back(pr(k,.2+i*.22,.2+i*.22+.35));put(f,{x:pos[i][0]+(V?0:0),y:pos[i][1]-fo*(V?300:260),s:mix(.5,1,a),o:pr(k,.2+i*.22,.2+i*.22+.1)*(1-fo)})});
-  arrows.forEach((a,i)=>{put(a,{x:ap[i][0],y:ap[i][1]-fo*(V?300:260),s:V?.8:1,r:V?90:0,o:pr(k,.45+i*.22,.7+i*.22)*(1-fo)})});
+  flow.forEach((f,i)=>{const c0=TIMING.chip[i]-.05,a=E.back(pr(RT,c0,c0+.4));put(f,{x:pos[i][0],y:pos[i][1]-fo*(V?300:260),s:mix(.5,1,a),o:pr(RT,c0,c0+.1)*(1-fo)})});
+  arrows.forEach((a,i)=>{put(a,{x:ap[i][0],y:ap[i][1]-fo*(V?300:260),s:V?.8:1,r:V?90:0,o:pr(RT,TIMING.chip[i+1]-.3,TIMING.chip[i+1]-.05)*(1-fo)})});
   // fechamento
   const f=E.out5(pr(k,1.6,2.3)),lp=E.back(pr(k,1.85,2.4));
   put(tFinal,{x:CX,y:V?H*.19:H*.19+0,o:0});
   put(rocket,{x:V?CX:W*.5,y:V?H*.24:H*.2,s:(V?1.4:1.1)*mix(.3,1,E.back(pr(k,1.55,2.15))),r:mix(-40,-8,E.out(pr(k,1.55,2.3)))+Math.sin(k*3)*3,o:pr(k,1.55,1.7)});
   put(logoCard,{x:CX,y:V?H*.47:H*.50,s:mix(.7,1,lp),o:pr(k,1.85,2.1)});
   put(urlTxt,{x:CX,y:V?H*.64:H*.69,s:mix(.85,1,E.out(pr(k,2.15,2.7))),o:pr(k,2.15,2.5)});
-  put(slog,{x:CX,y:V?H*.72:H*.79,o:pr(k,2.45,2.9),s:1});
+  put(slog,{x:CX,y:V?H*.72:H*.79,o:1,s:1});[...slog.children].forEach((w,i)=>{const q=E.back(pr(RT,TIMING.fin[i]-.1,TIMING.fin[i]+.3));w.style.display='inline-block';w.style.opacity=pr(RT,TIMING.fin[i]-.1,TIMING.fin[i]);w.style.transform='scale('+mix(.6,1,q)+')'});
  }
 }
 /* tempo real (acompanha a narração) -> tempo da animação */
@@ -309,7 +309,7 @@ function warp(T){const o=TIMING.orig,n=TIMING.ns;let i=0;while(i<o.length-2&&T>=
  const he=nL-tail;
  if(u<he)return o[i]+oL-tail;           // segura a cena enquanto a narração fala
  return o[i]+oL-tail+(u-he)}            // transição de saída em velocidade normal
-function seekReal(T){seekAnim(warp(T));stage.style.transformOrigin='50% 50%';stage.style.transform='scale('+(1+.014*Math.sin(T*.8))+')'}
+function seekReal(T){window.RT=T;seekAnim(warp(T));stage.style.transformOrigin='50% 50%';stage.style.transform='scale('+(1+.014*Math.sin(T*.8))+')'}
 window.seek=seekReal;window.DURATION=TIMING.ns[TIMING.ns.length-1];window.BEATS=BEATS;
 document.fonts.ready.then(()=>{window.READY=true});
 seekReal(0);
