@@ -13,6 +13,48 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
  const accessRole=value=>{if(!['admin','finance','operator'].includes(value))fail('Função inválida.');return value;};
  async function family(id){const f=await one('SELECT * FROM families WHERE id=?',integer(id,'Família',1,2147483647));if(!f)fail('Família não encontrada.',404);return f;}
  function ownFamily(u){need(['guardian','learner','admin'].includes(u.role)&&Boolean(u.family_id));return u.family_id;}
+ const familyKinds={income:['sales','allowance','gift','other_income'],expense:['supplies','shipping','purchase','other_expense']};
+ function shiftMonth(ym,delta){const [y,m]=ym.split('-').map(Number);return new Date(Date.UTC(y,m-1+delta,1)).toISOString().slice(0,7);}
+ // Months inside the chosen period, at least six and at most twelve, so a single month still has a small history.
+ function financeSeries(rows,from,to){
+  const end=to.slice(0,7);let start=from.slice(0,7);const wide=shiftMonth(end,-5);if(wide<start)start=wide;const cap=shiftMonth(end,-11);if(start<cap)start=cap;
+  const keys=[];for(let k=start;k<=end&&keys.length<12;k=shiftMonth(k,1))keys.push(k);
+  const buckets=new Map(keys.map(month=>[month,{month,income:0,expense:0,piece:0,by:{}}]));
+  for(const r of rows){
+   if(r.voided_at)continue;const b=buckets.get(String(r.entry_date).slice(0,7));if(!b)continue;
+   const field=r.kind==='income'?'income':r.kind==='expense'?'expense':null;if(!field)continue;const cents=Number(r.cents)||0;
+   b[field]+=cents;if(field==='expense'&&r.category==='printing')b.piece+=cents;
+   const key=r.participant_key||'family',slot=b.by[key]??={income:0,expense:0,piece:0};b.by[key]=slot;slot[field]+=cents;if(field==='expense'&&r.category==='printing')slot.piece+=cents;
+  }
+  return keys.map(k=>buckets.get(k));
+ }
+ async function assignParticipant(fid,entryId,key){
+  let participantId=null,userId=null;
+  if(key!=='family'){
+   const match=typeof key==='string'&&key.match(/^([up]):(\d+)$/);if(!match)fail('Participante inválido.');
+   const target=await one('SELECT id FROM '+(match[1]==='p'?'participants':'users')+' WHERE id=? AND family_id=?',Number(match[2]),fid);need(Boolean(target));if(match[1]==='p')participantId=target.id;else userId=target.id;
+  }
+  await run('INSERT INTO cash_attributions(entry_id,participant_id,user_id) VALUES(?,?,?) ON CONFLICT(entry_id) DO UPDATE SET participant_id=excluded.participant_id, user_id=excluded.user_id',entryId,participantId,userId);
+ }
+ async function manualEntry(u,id,{allowVoided=false}={}){
+  const e=await one('SELECT * FROM cash_entries WHERE id=?',id);if(!e)fail('Lançamento não encontrado.',404);
+  if(!u.family_id||u.family_id!==e.family_id)need(false);
+  if(e.scope!=='family'||e.source_key)fail('Lançamentos gerados pelo clube (pagamento da participação, recebimento do Asaas ou cobrança de impressão) não podem ser editados nem excluídos aqui. Se precisar corrigir, fale com o financeiro.',403);
+  need(u.role==='guardian'||u.role==='admin'||(u.role==='learner'&&e.created_by===u.id));
+  if(e.voided_at&&!allowVoided)fail('Este lançamento foi estornado e não pode mais ser editado.',400);
+  return e;
+ }
+ function presentFinanceEntry(u,scope,e){
+  const manual=e.scope==='family'&&!e.source_key,editor=u.role==='guardian'||(u.role==='admin'&&Boolean(u.family_id)),mine=u.role==='learner'&&e.created_by===u.id;
+  const touch=scope==='family'&&manual&&(editor||mine);
+  const canVoid=!e.voided_at&&e.payment_gateway!=='asaas'&&(scope==='club'||(e.scope==='family'&&(u.role==='guardian'||e.created_by===u.id)));
+  let lockReason='';
+  if(scope==='family'&&!manual&&!e.voided_at){
+   const key=String(e.source_key||'');
+   lockReason=e.payment_gateway==='asaas'?'Recebido pelo Asaas. O estorno é feito no painel do Asaas e o financeiro daqui atualiza sozinho.':key.startsWith('project:')||e.category==='printing'?'Cobrança de impressão feita pelo clube. Para corrigir, fale com o financeiro.':key.startsWith('payment:')||e.category==='membership'?'Pagamento ao clube. Este valor não pode ser editado nem excluído aqui.':'Lançamento gerado pelo clube. Ele fica só para consulta.';
+  }
+  return {...e,canVoid,canEdit:touch&&!e.voided_at,canDelete:touch,lockReason};
+ }
  async function addEntry({scope='club',familyId=null,kind,category,description,cents,entryDate=localDate(),sourceKey=null,createdBy=null,key=null}){
   return Number((await run('INSERT INTO cash_entries(scope,family_id,kind,category,description,cents,entry_date,source_key,created_by,created,request_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)',scope,familyId,kind,category,description,cents,entryDate,sourceKey,createdBy,now(),key)).lastInsertRowid);
  }
@@ -122,11 +164,13 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const from=date(url.searchParams.get('from')||period()+'-01'),to=date(url.searchParams.get('to')||monthEnd());if(from>to)fail('A data inicial deve anteceder a final.');
    let rows;
    if(scope==='club')rows=await all("SELECT c.*,f.name family_name,u.name author,r.gateway payment_gateway FROM cash_entries c LEFT JOIN families f ON f.id=c.family_id LEFT JOIN users u ON u.id=c.created_by LEFT JOIN billing_receipts r ON r.entry_id=c.id WHERE c.scope='club' ORDER BY c.entry_date DESC,c.id DESC");
-   else rows=await all("SELECT c.id,c.scope,c.family_id,c.created_by,CASE WHEN c.scope='club' THEN 'expense' ELSE c.kind END kind,c.category,c.description,c.cents,c.entry_date,c.source_key,c.created,c.voided_at,c.void_reason,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'family' ELSE COALESCE('p:' || a.participant_id,'u:' || a.user_id,'u:' || c.created_by,'family') END participant_key,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'Família' ELSE COALESCE(p.name,person.name,author.name,'Família') END participant_name FROM cash_entries c LEFT JOIN cash_attributions a ON a.entry_id=c.id LEFT JOIN participants p ON p.id=a.participant_id LEFT JOIN users person ON person.id=a.user_id LEFT JOIN users author ON author.id=c.created_by WHERE c.family_id=? AND (c.scope='family' OR (c.scope='club' AND c.kind='income')) ORDER BY c.entry_date DESC,c.id DESC",fid);
+   else rows=await all("SELECT c.id,c.scope,c.family_id,c.created_by,CASE WHEN c.scope='club' THEN 'expense' ELSE c.kind END kind,c.category,c.description,c.cents,c.entry_date,c.source_key,c.created,c.voided_at,c.void_reason,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'family' ELSE COALESCE('p:' || a.participant_id,'u:' || a.user_id,'u:' || c.created_by,'family') END participant_key,CASE WHEN c.scope='club' OR (a.entry_id IS NOT NULL AND a.participant_id IS NULL AND a.user_id IS NULL) THEN 'Família' ELSE COALESCE(p.name,person.name,author.name,'Família') END participant_name,(SELECT gateway FROM billing_receipts WHERE entry_id=c.id ORDER BY created DESC LIMIT 1) payment_gateway FROM cash_entries c LEFT JOIN cash_attributions a ON a.entry_id=c.id LEFT JOIN participants p ON p.id=a.participant_id LEFT JOIN users person ON person.id=a.user_id LEFT JOIN users author ON author.id=c.created_by WHERE c.family_id=? AND (c.scope='family' OR (c.scope='club' AND c.kind='income')) ORDER BY c.entry_date DESC,c.id DESC",fid);
    const within=rows.filter(r=>r.entry_date>=from&&r.entry_date<=to),live=within.filter(r=>!r.voided_at),sum=kind=>live.filter(r=>r.kind===kind).reduce((n,r)=>n+r.cents,0);
    const income=sum('income'),expenses=sum('expense'),investments=sum('investment'),opening=rows.filter(r=>!r.voided_at&&r.entry_date<from).reduce((n,r)=>n+(r.kind==='expense'?-r.cents:r.cents),0);
    const people=scope==='family'?await all("SELECT 'u:' || id key,name,role FROM users WHERE family_id=? UNION ALL SELECT 'p:' || id key,name,'participant' role FROM participants WHERE family_id=?",fid,fid):[];
-   json(res,{scope,from,to,entries:within.map(e=>({...e,canVoid:!e.voided_at&&e.payment_gateway!=='asaas'&&(scope==='club'||(e.scope==='family'&&(u.role==='guardian'||e.created_by===u.id)))})),people,actorKey:'u:'+u.id,guardian:u.role==='guardian'||(u.role==='admin'&&Boolean(u.family_id)),totals:{income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses},canEdit:true});return true;
+   const pieceCost=scope==='family'?live.filter(r=>r.category==='printing').reduce((n,r)=>n+Number(r.cents),0):0;
+   const totals={income,expenses,investments,result:income-expenses,opening,closing:opening+income+investments-expenses,...(scope==='family'?{pieceCost}:{})};
+   json(res,{scope,from,to,entries:within.map(e=>presentFinanceEntry(u,scope,e)),people,actorKey:'u:'+u.id,guardian:u.role==='guardian'||(u.role==='admin'&&Boolean(u.family_id)),totals,...(scope==='family'?{series:financeSeries(rows,from,to)}:{}),canEdit:true});return true;
   }
   if(path==='/api/finance/entries'&&method==='POST'){
    const b=await body(req),scope=b.scope;if(!['club','family'].includes(scope))fail('Área financeira inválida.');
@@ -136,15 +180,27 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
    const categories=scope==='club'?{income:['other_income'],expense:['equipment','maintenance','rent','energy','services','other_expense'],investment:['capital']}:{income:['sales','allowance','gift','other_income'],expense:['supplies','shipping','purchase','other_expense']};
    if(!categories[b.kind].includes(b.category))fail('Categoria inválida. Pagamentos de participantes são registrados na família ou no projeto.');
    const entryDate=date(b.entryDate);if(entryDate>localDate())fail('Registre somente movimentações realizadas.');
-   const id=await addEntry({scope,familyId:fid,kind:b.kind,category:b.category,description:str(b.description,'Descrição',200),cents:integer(b.cents,'Valor',1,100000000),entryDate,createdBy:u.id,key});if(scope==='family'){
-    const key=u.role==='learner'?'u:'+u.id:(b.participantKey||'u:'+u.id);let participantId=null,userId=null;
-    if(key!=='family'){
-     const match=typeof key==='string'&&key.match(/^([up]):(\d+)$/);if(!match)fail('Participante inválido.');
-     const target=await one('SELECT id FROM '+(match[1]==='p'?'participants':'users')+' WHERE id=? AND family_id=?',Number(match[2]),fid);need(Boolean(target));if(match[1]==='p')participantId=target.id;else userId=target.id;
-    }
-    await run('INSERT INTO cash_attributions(entry_id,participant_id,user_id) VALUES(?,?,?)',id,participantId,userId);
-   }
+   const id=await addEntry({scope,familyId:fid,kind:b.kind,category:b.category,description:str(b.description,'Descrição',200),cents:integer(b.cents,'Valor',1,100000000),entryDate,createdBy:u.id,key});if(scope==='family')await assignParticipant(fid,id,u.role==='learner'?'u:'+u.id:(b.participantKey||'u:'+u.id));
    await audit(u,'finance.entry.create',id);json(res,{id});return true;
+  }
+  const editEntry=path.match(/^\/api\/finance\/entries\/(\d+)$/);
+  if(editEntry&&method==='POST'){
+   const e=await manualEntry(u,Number(editEntry[1])),b=await body(req);
+   if(!familyKinds[b.kind]?.includes(b.category))fail('Categoria inválida.');
+   const entryDate=date(b.entryDate);if(entryDate>localDate())fail('Registre somente movimentações realizadas.');
+   if(u.role==='learner'&&b.participantKey!==undefined&&b.participantKey!=='u:'+u.id)fail('O participante do seu lançamento é você. O responsável pode classificar para outra pessoa.',403);
+   await run('UPDATE cash_entries SET kind=?,category=?,description=?,cents=?,entry_date=? WHERE id=?',b.kind,b.category,str(b.description,'Descrição',200),integer(b.cents,'Valor',1,100000000),entryDate,e.id);
+   if(u.role!=='learner'&&b.participantKey!==undefined)await assignParticipant(e.family_id,e.id,b.participantKey||'family');
+   await audit(u,'finance.entry.update',e.id);json(res,{ok:true});return true;
+  }
+  const deleteEntry=path.match(/^\/api\/finance\/entries\/(\d+)\/delete$/);
+  if(deleteEntry&&method==='POST'){
+   const e=await manualEntry(u,Number(deleteEntry[1]),{allowVoided:true}),b=await body(req);
+   if(b.confirm!==true)fail('Confirme a exclusão do lançamento.');
+   await run('DELETE FROM cash_attributions WHERE entry_id=?',e.id);
+   await run('DELETE FROM cash_entries WHERE id=?',e.id);
+   await audit(u,'finance.entry.delete',[e.id,e.entry_date,e.cents,String(e.description).replace(/[\r\n]/g,' ').slice(0,120)].join(' · '));
+   json(res,{ok:true});return true;
   }
   const voidEntry=path.match(/^\/api\/finance\/entries\/(\d+)\/void$/);
   if(voidEntry&&method==='POST'){
