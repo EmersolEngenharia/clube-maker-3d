@@ -34,7 +34,7 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
    const installments=b.method==='card_installments'?integer(b.installments??1,'Parcelas',1,12):1;
    if(b.purpose==='project'&&!b.projectId)fail('Escolha um projeto concluído.');
    const projectId=b.projectId?integer(b.projectId,'Projeto',1,2147483647):null,cfg=await config();let amount=plan==='annual'?cfg.annual:cfg.monthly;
-   if(projectId){const p=await db.one('SELECT * FROM projects WHERE id=? AND family_id=?',projectId,fid);if(!p||!['queued','printing','ready','completed'].includes(p.status)||p.paid)fail('O projeto precisa estar aprovado e sem pagamento.');if(recurring(b.method))fail('Impressões avulsas não podem gerar assinatura.');amount=p.charge-await projectReceived(projectId);}
+   if(projectId){const p=await db.one('SELECT * FROM projects WHERE id=? AND family_id=?',projectId,fid);if(!p||!['queued','printing','ready','completed'].includes(p.status)||p.paid)fail('O projeto precisa estar aprovado e sem pagamento.');if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');if(recurring(b.method))fail('Impressões avulsas não podem gerar assinatura.');amount=p.charge-await projectReceived(projectId);}
    integer(amount,'Valor em centavos',1,10000000);
    const pending=await db.one("SELECT id FROM billing_contracts WHERE family_id=? AND purpose=? AND (status IN ('creating','pending','needs_review') OR (provider='asaas' AND method IN ('pix_recurring','card_recurring') AND status IN ('active','past_due')))"+(projectId?' AND project_id=?':''),fid,projectId?'project':'membership',...(projectId?[projectId]:[]));
    if(pending)fail('Já existe cobrança ou recorrência em andamento. Abra a cobrança existente antes de criar outra.',409);

@@ -1,6 +1,24 @@
 export const statuses = ['draft','review','question','approval','queued','printing','ready','completed','cancelled','failed'];
 export const reserved = ['queued','printing'];
+// `ready` is the visible stage "À retirar": printed, waiting for the family to pick it up.
 export const consumed = ['ready','completed'];
+// Concluído needs a settled balance. Charge 0 is not enough: staff marks Isento / Bonificado.
+export function financiallySettled(project){
+  return Boolean(Number(project?.paid)) || Boolean(Number(project?.exempt));
+}
+// List scope for Pedidos do clube. Default hides Concluído and Cancelado; Todos brings both back.
+export function ordersInScope(projects, filter){
+  if(filter==='completed') return projects.filter(p=>p.status==='completed');
+  if(filter==='all') return projects;
+  return projects.filter(p=>p.status!=='completed'&&p.status!=='cancelled');
+}
+export function financeKey(project){
+  if(Number(project?.paid)) return 'paid';
+  if(Number(project?.exempt)) return 'exempt';
+  if(project?.bill_open) return 'open';
+  if(project?.status==='ready'||project?.status==='completed') return Number(project.charge)>0?'due':'none';
+  return '';
+}
 export function period(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).formatToParts(date);
   return `${parts.find(p=>p.type==='year').value}-${parts.find(p=>p.type==='month').value}`;
