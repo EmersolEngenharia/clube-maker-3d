@@ -32,7 +32,7 @@ export function createGallery({db,storage,fail,str,integer,num,body,json,event,m
   operator(u);const collection=str(b.collection,'Coleção',40),note=optional(b.note,'Comentário da equipe',500),image=photo(b.photo);
   if(b.projectId!=null){
    const p=await one('SELECT * FROM projects WHERE id=?',Number(b.projectId));if(!p)fail('Projeto não encontrado.',404);
-   if(!['ready','completed'].includes(p.status))fail('Só peças já impressas vão para a vitrine.');
+   if(!['ready','picked','completed'].includes(p.status))fail('Só peças já impressas vão para a vitrine.');
    if(await one('SELECT id FROM gallery_items WHERE project_id=?',p.id))fail('Esta peça já está na vitrine.',409);
    const m=await one('SELECT * FROM model_links WHERE project_id=?',p.id);if(!image&&!m?.image_key)fail('Envie uma foto da peça pronta.');
    const photoKey=await keep('gallery',image),siteKey=await copy(m?.image_key);

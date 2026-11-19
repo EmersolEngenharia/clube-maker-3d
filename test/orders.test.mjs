@@ -28,22 +28,24 @@ const projects=[
  {id:4,status:'ready',family_id:2,paid:0,exempt:1,charge:100,name:'Presente'},
  {id:5,status:'completed',family_id:1,paid:1,exempt:0,charge:100,name:'Pago'},
  {id:6,status:'cancelled',family_id:1,paid:0,exempt:0,charge:0,name:'Cancelado'},
- {id:7,status:'completed',family_id:1,paid:0,exempt:0,charge:0,name:'Zero'}
+ {id:7,status:'completed',family_id:1,paid:0,exempt:0,charge:0,name:'Zero'},
+ {id:8,status:'picked',family_id:2,paid:0,exempt:0,charge:100,name:'Retirado'}
 ];
 const ids=list=>list.map(p=>p.id);
 
 test('lista padrão esconde concluído e cancelado e combina com os outros filtros',()=>{
- assert.deepEqual(ids(ordersInScope(projects,'open')),[1,2,3,4]);
- assert.deepEqual(ids(ui.ordersInScope(projects,'open')),[1,2,3,4]);
+ assert.deepEqual(ids(ordersInScope(projects,'open')),[1,2,3,4,8]);
+ assert.deepEqual(ids(ui.ordersInScope(projects,'open')),[1,2,3,4,8]);
  assert.deepEqual(ids(ordersInScope(projects,'completed')),[5,7]);
  assert.deepEqual(ids(ui.ordersInScope(projects,'completed')),[5,7]);
- assert.equal(ordersInScope(projects,'all').length,7);
+ assert.equal(ordersInScope(projects,'all').length,8);
  // Unknown or the old "active" value stays on the working list.
- assert.deepEqual(ids(ordersInScope(projects,'active')),[1,2,3,4]);
+ assert.deepEqual(ids(ordersInScope(projects,'active')),[1,2,3,4,8]);
  const open=ordersInScope(projects,'open');
  assert.deepEqual(ids(open.filter(p=>ui.orderListed(p,{status:'ready',family:'',fin:''}))),[3,4]);
  assert.deepEqual(ids(open.filter(p=>ui.orderListed(p,{status:'',family:'2',fin:'exempt'}))),[4]);
- assert.deepEqual(ids(open.filter(p=>ui.orderListed(p,{status:'',family:'',fin:'unpaid'}))),[2,3]);
+ assert.deepEqual(ids(open.filter(p=>ui.orderListed(p,{status:'',family:'',fin:'unpaid'}))),[2,3,8]);
+ assert.deepEqual(ids(open.filter(p=>ui.orderListed(p,{status:'picked',family:'',fin:''}))),[8]);
  assert.deepEqual(ids(ordersInScope(projects,'completed').filter(p=>ui.orderListed(p,{status:'cancelled',family:'',fin:''}))),[]);
  assert.deepEqual(ids(ordersInScope(projects,'all').filter(p=>ui.orderListed(p,{status:'cancelled',family:'',fin:''}))),[6]);
 });
@@ -62,6 +64,9 @@ test('concluído exige pago ou isento; o financeiro distingue isento de sem valo
 
 test('a tela nomeia À retirar, isento e a visão Não concluídos',()=>{
  assert.match(app,/ready:'À retirar'/);
+ assert.match(app,/picked:'Retirado · aguardando pagamento'/);
+ assert.match(app,/pagamento ainda está em aberto/);
+ assert.match(ops,/Retirado · aguardando pagamento/);
  assert.match(app,/filter:'open'/);
  assert.match(app,/Não concluídos/);
  assert.match(app,/Concluídos/);

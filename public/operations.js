@@ -198,7 +198,7 @@ function benefitKindChanged(form){
 document.addEventListener('input',e=>{if(!e.target.classList?.contains('date-br'))return;const d=e.target.value.replace(/\D/g,'').slice(0,8);e.target.value=[d.slice(0,2),d.slice(2,4),d.slice(4)].filter(Boolean).join('/');});
 
 // ---- Pedidos da equipe: busca, filtros, ordem e ações em massa ----
-const paOrder=['draft','review','question','approval','queued','printing','ready','completed','cancelled','failed'];
+const paOrder=['draft','review','question','approval','queued','printing','ready','picked','completed','cancelled','failed'];
 const paState=()=>state.pa??={q:'',status:'',family:'',fin:'',sort:'updated',dir:'desc',sel:new Set()};
 const paNorm=v=>String(v??'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 const paNumber=p=>'#'+String(p.id).padStart(3,'0');
@@ -220,7 +220,7 @@ function paFinKey(p){
  if(Number(p.paid))return 'paid';
  if(Number(p.exempt))return 'exempt';
  if(p.bill_open)return 'open';
- if(['ready','completed'].includes(p.status))return p.charge>0?'due':'none';
+ if(['ready','picked','completed'].includes(p.status))return p.charge>0?'due':'none';
  return '';
 }
 function orderListed(p,f){return (!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!f.fin||(f.fin==='unpaid'?['due','open'].includes(paFinKey(p)):paFinKey(p)===f.fin));}
@@ -238,7 +238,7 @@ function paListHtml(){
 const paRefresh=()=>{const el=$('#pa-list');if(el)el.innerHTML=paListHtml();};
 const paText={
  finish:{title:'Finalizar pedidos já impressos',verb:'Finalizar',note:'Só vale para pedidos que estão na fila. Cada um vira "À retirar" com o tempo e o filamento orçados. Nenhum WhatsApp é enviado. O filamento sai do estoque e o PIX segue as regras de cobrança, salvo pedido isento. Se o consumo real foi outro, finalize pelo pedido e marque o aviso se quiser avisar a família.'},
- collect:{title:'Marcar como retirado',verb:'Marcar retirado',note:'Só vale para pedidos "À retirar" já pagos ou isentos/bonificados. Cada um vira "Concluído". Nenhum WhatsApp é enviado. Pedido em aberto no financeiro fica de fora.'},
+ collect:{title:'Marcar como retirado',verb:'Marcar retirado',note:'Vale para pedidos "À retirar". Pago ou isento vira "Concluído". Com pagamento em aberto fica "Retirado · aguardando pagamento" e conclui sozinho quando o pagamento cair. Nenhum WhatsApp é enviado. O lembrete de retirada para.'},
  exempt:{title:'Marcar como isento / bonificado',verb:'Marcar isento / bonificado',note:'Para peça que não é venda: presente, amostra ou uso interno. Não gera PIX, não entra no caixa e libera a conclusão. Pedido já pago ou com PIX em andamento fica de fora. Nenhum WhatsApp é enviado.'},
  paid:{title:'Marcar como pago',verb:'Marcar pago',note:'Só vale para pedidos à retirar ou concluídos, sem cobrança PIX em andamento, ainda não pagos e que não sejam isentos. Registra o valor total no caixa e avisa a família no WhatsApp.'},
  cancel:{title:'Cancelar pedidos',verb:'Cancelar pedidos',note:'Cancela sem cobrança e libera as horas reservadas. Pedidos já em impressão ou concluídos não são cancelados por aqui.'},

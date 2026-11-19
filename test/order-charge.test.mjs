@@ -20,6 +20,10 @@ test('a tela do pedido deixa a equipe escolher PIX ou cartão, com 1× como padr
  assert.match(app,/Parcelas em andamento/);
  assert.match(app,/Ver cobrança no Asaas/);
  assert.match(app,/Pagar com PIX/);
+ assert.match(app,/function chargeDoneModal/);
+ assert.match(app,/Copiar link/);
+ assert.match(app,/A família foi avisada no WhatsApp/);
+ assert.match(app,/O WhatsApp não foi enviado/);
  assert.match(billingUi,/Cartão — link de pagamento \(até 12× sem juros\)/);
  assert.match(billingUi,/pix_cash:'PIX avulso'/);
 });
@@ -49,9 +53,10 @@ test('equipe gera o link do pedido; a família vê a cobrança e o padrão conti
  await admin(`/projects/${cardId}/charge`,{},409);
  const seen=await guardian(`/projects/${cardId}`);
  assert.equal(seen.payment.method,'card_installments');assert.equal(seen.payment.installments,3);assert.equal(seen.payment.amountCents,card.amountCents);assert.equal(seen.payment.status,'pending');assert.equal(seen.payment.checkoutUrl,null);assert.equal(seen.payment.error,undefined);
- assert.match(seen.events.at(-1).text,/no cartão em 3× sem juros/);
+ assert.equal(card.issued,true);assert.equal(card.whatsapp,false);
+ assert.match(seen.events.at(-1).text,/Link de pagamento no cartão \(até 3x\)/);
  const pix=await admin(`/projects/${pixId}/charge`,{});
- assert.equal(pix.method,'pix_cash');assert.equal(pix.installments,1);
+ assert.equal(pix.method,'pix_cash');assert.equal(pix.installments,1);assert.equal(pix.issued,true);
  const pixSeen=await guardian(`/projects/${pixId}`);
- assert.equal(pixSeen.payment.method,'pix_cash');assert.match(pixSeen.events.at(-1).text,/por PIX/);
+ assert.equal(pixSeen.payment.method,'pix_cash');assert.match(pixSeen.events.at(-1).text,/emitida via PIX/);assert.match(pixSeen.events.at(-1).text,/WhatsApp não foi enviado/);
 });
