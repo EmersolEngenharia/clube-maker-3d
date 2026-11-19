@@ -16,7 +16,7 @@ import { randomBytes, scrypt, timingSafeEqual, createHash } from 'node:crypto';
 import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { period, allocation, settle, financiallySettled } from './domain.mjs';
+import { period, pricedQuote, hoursLine, settle, financiallySettled } from './domain.mjs';
 import { parseModelLink, lookupModel, licenseLevel } from './models.mjs';
 import { createGallery } from './gallery.mjs';
 import { createSchedule } from './schedule.mjs';
@@ -40,6 +40,10 @@ function fail(message,status=400){throw Object.assign(new Error(message),{status
 function str(value,label,max=500){if(typeof value!=='string'||!value.trim()||value.trim().length>max)fail(`${label}: preencha entre 1 e ${max} caracteres.`);return value.trim();}
 function num(v,label,min,max){if(typeof v!=='number'||!Number.isFinite(v)||v<min||v>max)fail(`${label}: valor inválido.`);return v;}
 function integer(v,label,min,max){num(v,label,min,max);if(!Number.isInteger(v))fail(`${label}: use um número inteiro.`);return v;}
+function optInt(v,label,min,max){if(v===undefined||v===null||v==='')return 0;return integer(v,label,min,max);}
+function materialDefaultRate(m,c){return Math.round(m.cost*(1+c.markup/100));}
+function quoteRates(b,c,m){const extraDefault=c.extra,materialDefault=materialDefaultRate(m,c);const extraRate=b.extraRate===undefined||b.extraRate===null||b.extraRate===''?extraDefault:integer(b.extraRate,'Valor da hora',0,10000000);const materialRate=b.materialRate===undefined||b.materialRate===null||b.materialRate===''?materialDefault:integer(b.materialRate,'Valor do filamento',0,10000000);return {extraRate,materialRate,custom:extraRate!==extraDefault||materialRate!==materialDefault?1:0};}
+const brMoney=cents=>(cents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 function creds(b){const email=str(b.email,'E-mail',150).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('Informe um e-mail válido.');if(typeof b.password!=='string'||b.password.length<6||b.password.length>200)fail('Use uma senha entre 6 e 200 caracteres.');return email;}
 async function event(id,text){(await run('INSERT INTO events(project_id,text,created) VALUES(?,?,?)',id,text,now()));}
 const attempts=new Map();
@@ -51,7 +55,7 @@ function authorized(u,roles){if(!u)fail('Entre na sua conta para continuar.',401
 async function project(id,u){authorized(u);const p=(await one('SELECT * FROM projects WHERE id=?',id));if(!p)fail('Projeto não encontrado.',404);if(!isTeam(u)&&p.family_id!==u.family_id)fail('Projeto não encontrado.',404);return p;}
 const quota=createQuota(db);
 const familyBalance=id=>quota.balance(id);
-async function quote(p){const a=allocation(p.minutes,(await familyBalance(p.family_id)).available,p.extra_rate);return {...a,materialCost:Math.round(p.grams*p.material_rate/1000),total:a.extraCost+Math.round(p.grams*p.material_rate/1000)};}
+async function quote(p){const bal=await familyBalance(p.family_id),q=pricedQuote({minutes:p.minutes,grams:p.grams,available:bal.available,extraRate:p.extra_rate,materialRate:p.material_rate,bonusMinutes:p.bonus_minutes,bonusCents:p.bonus_cents});return {...q,balance:bal.available,balanceAfter:bal.available-q.included,hoursLine:hoursLine(q)};}
 // ---- Ações sobre pedidos, usadas pela tela do pedido e pelas ações em massa da equipe ----
 async function cancelProject(p,u){(await run("UPDATE projects SET status='cancelled',included=0,charge=0,updated=? WHERE id=?",now(),p.id));(await event(p.id,'Pedido cancelado sem cobrança. Reserva de horas liberada.'));await run('DELETE FROM benefit_allocations WHERE project_id=?',p.id);await schedule.onCancelled(p,u);}
 async function finishProject(p,u,minutes,grams,note,notify=false){const real=await schedule.settle(p,minutes,grams),s=real||settle(p,minutes,grams);(await run("UPDATE projects SET status='ready',actual_minutes=?,actual_grams=?,used=?,charge=?,updated=? WHERE id=?",minutes,grams,s.used,s.charge,now(),p.id));const base=note||(real?'Impressão concluída. Peça à retirar; custo calculado pelo consumo real.':'Impressão concluída. Peça à retirar; consumo ajustado sem ultrapassar o orçamento.');(await event(p.id,base+(notify?' A família foi avisada no WhatsApp.':' Nenhum aviso foi enviado no WhatsApp.')));await schedule.onFinished(p,u,{notify:notify===true});}
@@ -226,7 +230,7 @@ async function handle(req,res){
       const team=isTeam(u),fid=u.family_id;
       const scoped=(sql,clause='family_id')=>({sql:sql+(team?'':' WHERE '+clause+'=?'),params:team?[]:[fid]});
       const data=await db.snapshot({
-        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,(SELECT 1 FROM billing_contracts bc WHERE bc.project_id=p.id AND bc.status IN (\'creating\',\'pending\',\'needs_review\') LIMIT 1) bill_open,f.name family_name,'+modelColumns+' FROM projects p JOIN families f ON f.id=p.family_id LEFT JOIN model_links ml ON ml.project_id=p.id ORDER BY p.created DESC':'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,'+modelColumns+' FROM projects p LEFT JOIN model_links ml ON ml.project_id=p.id WHERE p.family_id=? ORDER BY p.created DESC',params:team?[]:[fid]},
+        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,p.bonus_minutes,p.bonus_cents,(SELECT 1 FROM billing_contracts bc WHERE bc.project_id=p.id AND bc.status IN (\'creating\',\'pending\',\'needs_review\') LIMIT 1) bill_open,f.name family_name,'+modelColumns+' FROM projects p JOIN families f ON f.id=p.family_id LEFT JOIN model_links ml ON ml.project_id=p.id ORDER BY p.created DESC':'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,p.bonus_minutes,p.bonus_cents,'+modelColumns+' FROM projects p LEFT JOIN model_links ml ON ml.project_id=p.id WHERE p.family_id=? ORDER BY p.created DESC',params:team?[]:[fid]},
         queue:{sql:"SELECT p.id,p.name,p.family_id,p.status,p.minutes,p.approved_at,s.starts_at,s.ends_at,s.validated_at FROM projects p LEFT JOIN print_slots s ON s.project_id=p.id WHERE p.status IN ('queued','printing') ORDER BY CASE p.status WHEN 'printing' THEN 0 ELSE 1 END,COALESCE(s.starts_at,p.approved_at),p.id"},
         families:scoped('SELECT * FROM families','id'),
         members:{sql:"SELECT u.id,u.name,u.email,u.role,u.family_id,t.user_id is_staff,c.whatsapp FROM users u LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE "+(team?'u.family_id IS NOT NULL':u.role==='guardian'?'u.family_id=?':'1=0'),params:!team&&u.role==='guardian'?[fid]:[]},
@@ -248,7 +252,10 @@ async function handle(req,res){
     }
     if(path==='/api/participants'&&method==='POST'){if(!guardianOf(u))fail('Esta ação é exclusiva do responsável.',403);const b=await body(req);if((await all('SELECT id FROM participants WHERE family_id=?',u.family_id)).length>=20)fail('Limite de 20 participantes por família.');(await run('INSERT INTO participants(family_id,name) VALUES(?,?)',u.family_id,str(b.name,'Nome',80)));return json(res,{ok:true});}
     if(path==='/api/projects'&&method==='POST'){
-      authorized(u,['guardian','learner']);const b=await body(req);const kind=['idea','file','link'].includes(b.kind)?b.kind:'idea';
+      const b=await body(req),onBehalf=b.onBehalf===true;let familyId;
+      if(onBehalf){if(!canOperate(u))fail('Só a equipe cria pedido em nome de uma família.',403);familyId=integer(Number(b.familyId),'Família',1,1000000000);if(!(await one('SELECT id FROM families WHERE id=?',familyId)))fail('Família não encontrada.',404);}
+      else{authorized(u,['guardian','learner']);if(!u.family_id)fail('Esta conta não está ligada a uma família.',403);familyId=u.family_id;}
+      const kind=['idea','file','link'].includes(b.kind)?b.kind:'idea';
       const cfg=(await config()),colors=cfg.materials.filter(m=>m.active).flatMap(m=>m.colors);
       if(b.color!=='Quero ajuda'&&!colors.includes(b.color))fail('Escolha uma cor disponível.');
       // A piece chosen on a model site keeps only its link and details; the file stays on the original site.
@@ -256,10 +263,12 @@ async function handle(req,res){
       const copy=kind==='link'&&b.galleryItem!=null?await gallery.forOrder(b.galleryItem):null;
       const link=copy?copy.link:kind==='link'?parseModelLink(b.link?.url):null,linkTitle=copy?copy.title:link?str(b.link?.title,'Nome da peça',200):null;
       const description=link&&!(typeof b.description==='string'&&b.description.trim())?(copy?'Igual à peça da vitrine do clube.':`Peça escolhida no ${link.siteName}.`):str(b.description,'Descrição',3000);
-      const id=Number((await run('INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',u.family_id,str(b.name,'Nome do projeto',100),description,str(b.participant,'Participante',80),kind,str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),now(),now())).lastInsertRowid);
+      const id=Number((await run('INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,status,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)',familyId,str(b.name,'Nome do projeto',100),description,str(b.participant,'Participante',80),kind,str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),onBehalf?'review':'draft',now(),now())).lastInsertRowid);
       if(link){const c=modelCache.get(link.url),info=copy||(c?.expires>Date.now()?c.info:null),key=info?.image?'model-'+randomBytes(24).toString('hex'):null;if(key)await storage.put(key,info.image.bytes);
        try{await run('INSERT INTO model_links(project_id,site,url,model_id,profile_id,title,author,license,image_key,image_mime,license_checked_by,license_checked_at,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',id,link.site,link.url,link.modelId,link.profileId,linkTitle,info?.author??null,info?.license??null,key,key?info.image.mime:null,copy?.checkedBy??null,copy?.checkedAt??null,now());}catch(e){if(key)await storage.remove(key).catch(()=>{});throw e;}}
-      (await event(id,copy?'Pedido feito a partir da vitrine do clube, salvo como rascunho.':link?`Peça do ${link.siteName} salva como rascunho.`:'Ideia salva como rascunho.'));return json(res,{id});
+      if(onBehalf){await event(id,`Pedido criado pela equipe em nome da família, por ${u.name}.`);await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'projects.create.onbehalf',String(id),now());}
+      else await event(id,copy?'Pedido feito a partir da vitrine do clube, salvo como rascunho.':link?`Peça do ${link.siteName} salva como rascunho.`:'Ideia salva como rascunho.');
+      return json(res,{id});
     }
     if(path==='/api/projects/bulk'&&method==='POST'){
       const b=await body(req);authorized(u,['admin']);if(!isAdmin(u))fail('Ação exclusiva da administração.',403);
@@ -288,9 +297,11 @@ async function handle(req,res){
       if(action==='quotepreview'){
         authorized(u,canOperate(u)?null:['admin']);
         const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
-        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),bal=await familyBalance(p.family_id),rate=Math.round(m.cost*(1+c.markup/100));
-        const a=allocation(minutes,bal.available,c.extra),materialCost=Math.round(grams*rate/1000);
-        return json(res,{minutes,grams,balance:bal.available,included:a.included,extra:a.extra,extraCost:a.extraCost,extraRate:c.extra,materialRate:rate,materialCost,timeValue:Math.round(minutes*c.extra/60),creditValue:Math.round(a.included*c.extra/60),total:a.extraCost+materialCost,balanceAfter:bal.available-a.included});
+        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),bal=await familyBalance(p.family_id),rates=quoteRates(b,c,m);
+        const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000);
+        if(bonusMinutes>minutes)fail('A bonificação de horas não pode passar do tempo do orçamento.');
+        const q=pricedQuote({minutes,grams,available:bal.available,extraRate:rates.extraRate,materialRate:rates.materialRate,bonusMinutes,bonusCents});
+        return json(res,{...q,balance:bal.available,balanceAfter:bal.available-q.included,hoursLine:hoursLine(q)});
       }
       if(action==='edit'){
         if(!['draft','question','review'].includes(p.status))fail('Este projeto já tem orçamento. Peça uma nova avaliação antes de alterar.');
@@ -333,8 +344,10 @@ async function handle(req,res){
         authorized(u,canOperate(u)?null:['admin']);if(!['review','question','approval','failed'].includes(p.status))fail('O projeto precisa estar em avaliação para receber um orçamento.');
         const model=p.kind==='link'?(await one('SELECT license,license_checked_at FROM model_links WHERE project_id=?',id)):null;if(model&&licenseLevel(model.license)!=='open'&&!model.license_checked_at)fail('Confira a licença do modelo antes de preparar o orçamento.');
         const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
-        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),note=str(b.note,'Orientação',1000);
-        (await run("UPDATE projects SET status='approval',minutes=?,grams=?,material=?,material_rate=?,extra_rate=?,quote_note=?,updated=? WHERE id=?",minutes,grams,m.name,Math.round(m.cost*(1+c.markup/100)),c.extra,note,now(),id));(await event(id,'Orçamento preparado. Aguardando aprovação do responsável.'));{const fresh=(await project(id,u));await schedule.onQuoted(fresh,u,await quote(fresh));}
+        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),note=str(b.note,'Orientação',1000),rates=quoteRates(b,c,m);
+        const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000);
+        if(bonusMinutes>minutes)fail('A bonificação de horas não pode passar do tempo do orçamento.');
+        (await run("UPDATE projects SET status='approval',minutes=?,grams=?,material=?,material_rate=?,extra_rate=?,quote_note=?,bonus_minutes=?,bonus_cents=?,custom_rates=?,updated=? WHERE id=?",minutes,grams,m.name,rates.materialRate,rates.extraRate,note,bonusMinutes,bonusCents,rates.custom,now(),id));(await event(id,`Orçamento preparado. Proposta à família: ${note.replace(/[.!?…]\s*$/,'')}.${rates.custom?` Valores ajustados pela equipe: hora ${brMoney(rates.extraRate)} e filamento ${brMoney(rates.materialRate)}/kg.`:''} Aguardando aprovação do responsável.`));{const fresh=(await project(id,u));await schedule.onQuoted(fresh,u,await quote(fresh));}
       }
       else if(action==='license'){authorized(u,canOperate(u)?null:['admin']);if(b.checked!==true)fail('Confirme que conferiu a licença do modelo.');if(!['draft','review','question','approval','failed'].includes(p.status))fail('A licença é conferida antes do orçamento.');if(!(await run('UPDATE model_links SET license_checked_by=?,license_checked_at=? WHERE project_id=? AND license_checked_at IS NULL',u.id,now(),id)).changes)fail('Este pedido não tem licença para conferir.',409);(await event(id,'A equipe conferiu a licença do modelo e liberou a impressão.'));}
       else if(action==='approve'){

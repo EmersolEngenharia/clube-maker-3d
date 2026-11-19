@@ -1,0 +1,74 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {spawn} from 'node:child_process';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {once} from 'node:events';
+
+const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+
+test('o botão de pedido da equipe fica na lista de pedidos',()=>{
+ assert.match(app,/Pedido para uma família/);
+ assert.match(app,/Criar e preparar orçamento/);
+ assert.match(app,/order-for-family/);
+ assert.match(app,/onBehalf/);
+});
+
+test('a equipe cria o pedido em nome da família e já pode orçar',async t=>{
+ const data=await mkdtemp(join(tmpdir(),'maker-behalf-'));
+ const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:data,PORT:'3182',HOST:'127.0.0.1',MODEL_LOOKUP:'off'},stdio:['ignore','pipe','pipe']});
+ t.after(async()=>{if(child.exitCode===null){child.kill();await once(child,'exit');}await rm(data,{recursive:true,force:true});});
+ await Promise.race([once(child.stdout,'data'),once(child,'exit').then(()=>{throw new Error('Servidor não iniciou.');})]);
+ const base='http://127.0.0.1:3182',pass='Testing123!';
+ function client(){let cookie='';return async(path,b,status=200)=>{const r=await fetch(base+'/api'+path,{method:b===undefined?'GET':'POST',headers:{...(b===undefined?{}:{'Content-Type':'application/json'}),Cookie:cookie},body:b===undefined?undefined:JSON.stringify(b)});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const value=await r.json();assert.equal(r.status,status,`${path}: ${JSON.stringify(value)}`);return value;};}
+ const admin=client(),guardian=client(),learner=client(),other=client(),op=client(),fin=client();
+ await admin('/setup',{name:'Emerson',email:'admin@behalf.test',password:pass});
+ const family=await admin('/families',{name:'Família Oliveira',plan:'monthly'});
+ const otherFamily=await admin('/families',{name:'Outra família',plan:'monthly'});
+ async function enroll(c,role,email,fid){const inv=await admin('/invites',{familyId:fid,role});await c('/register',{token:inv.token,name:email.split('@')[0],email,password:pass});}
+ await enroll(guardian,'guardian','marina@behalf.test',family.id);
+ await enroll(learner,'learner','ana@behalf.test',family.id);
+ await enroll(other,'guardian','outra@behalf.test',otherFamily.id);
+ async function staff(c,email,accessRole){const inv=await admin('/staff-invites',{email,accessRole});await c('/staff-register',{token:inv.token,name:email.split('@')[0],email,password:pass});}
+ await staff(op,'operador@behalf.test','operator');
+ await staff(fin,'financeiro@behalf.test','finance');
+ const order={name:'Chaveiro',description:'Um chaveiro de polvo.',participant:'Ana',kind:'idea',size:'Pequeno — cabe na palma da mão',color:'Azul',quantity:2};
+ await learner('/projects',{...order,onBehalf:true,familyId:family.id},403);
+ await guardian('/projects',{...order,onBehalf:true,familyId:otherFamily.id},403);
+ await fin('/projects',{...order,onBehalf:true,familyId:family.id},403);
+ await op('/projects',{...order,onBehalf:true},400);
+ await op('/projects',{...order,onBehalf:true,familyId:99999},404);
+ await op('/projects',{...order,color:'Cor inexistente',onBehalf:true,familyId:family.id},400);
+ await op('/projects',{...order,quantity:0,onBehalf:true,familyId:family.id},400);
+ const draft=await guardian('/projects',order);
+ assert.equal((await guardian(`/projects/${draft.id}`)).status,'draft');
+ const created=await op('/projects',{...order,onBehalf:true,familyId:family.id});
+ const seen=await guardian(`/projects/${created.id}`);
+ assert.equal(seen.family_id,family.id);
+ assert.equal(seen.status,'review');
+ assert.equal(seen.participant,'Ana');
+ assert.equal(seen.quantity,2);
+ assert.match(seen.events.map(e=>e.text).join('\n'),/Pedido criado pela equipe em nome da família, por operador/);
+ await other(`/projects/${created.id}`,undefined,404);
+ const audit=(await admin('/team')).audit.find(a=>a.action==='projects.create.onbehalf'&&a.target===String(created.id));
+ assert.ok(audit);
+ assert.equal(audit.name,'operador');
+ await op(`/projects/${created.id}/file`,{name:'referencia.png',data:Buffer.from('png').toString('base64')});
+ assert.equal((await guardian(`/projects/${created.id}`)).files.length,1);
+ await op(`/projects/${created.id}/quote`,{minutes:90,grams:20,material:'PLA',note:'Foram em duas placas.',bonusMinutes:30,bonusCents:100});
+ const quoted=await guardian(`/projects/${created.id}`);
+ assert.equal(quoted.status,'approval');
+ assert.equal(quoted.quote_note,'Foram em duas placas.');
+ assert.equal(quoted.bonus_minutes,30);
+ assert.ok(quoted.quote.total>=0);
+ await guardian(`/projects/${created.id}/approve`,{total:quoted.quote.total,included:quoted.quote.included});
+ assert.equal((await guardian(`/projects/${created.id}`)).status,'queued');
+ await op('/projects',{...order,kind:'link',onBehalf:true,familyId:family.id,link:{url:'https://makerworld.com',title:'Peça'}},400);
+ const linked=await op('/projects',{...order,kind:'link',description:'',onBehalf:true,familyId:family.id,link:{url:'https://makerworld.com/pt/models/777-polvo',title:'Polvo'}});
+ const linkView=await guardian(`/projects/${linked.id}`);
+ assert.equal(linkView.status,'review');
+ assert.equal(linkView.model.title,'Polvo');
+ assert.match(linkView.events.at(-1).text,/em nome da família/);
+});
