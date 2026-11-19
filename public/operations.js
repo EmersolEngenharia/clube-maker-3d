@@ -286,7 +286,8 @@ function ovData(){
  const fam=fs.map(f=>{const b=f.balance||{};return {id:f.id,name:f.name,used:b.used||0,held:b.held||0,base:f.allowance||b.baseAllowance||0,extraMinutes:b.extraMinutes||0,extraCost:b.extraCost||0,materialCost:b.materialCost||0,grams:b.grams||0};}).sort((a,b)=>(b.used+b.held)-(a.used+a.held)||a.name.localeCompare(b.name));
  fam.forEach((f,i)=>f.color=ovColors[i%ovColors.length]);
  const sum=k=>fam.reduce((n,f)=>n+f[k],0),open=ps.filter(p=>p.period===per&&['queued','printing'].includes(p.status));
- const pending={minutes:open.reduce((n,p)=>n+Math.max(0,p.minutes-p.included),0),hoursCost:open.reduce((n,p)=>n+Math.round(Math.max(0,p.minutes-p.included)*p.extra_rate/60),0),grams:open.reduce((n,p)=>n+p.grams,0),materialCost:open.reduce((n,p)=>n+Math.round(p.grams*p.material_rate/1000),0)};
+ const pendingPart=p=>{const extraBefore=Math.max(0,p.minutes-p.included),gift=Math.min(Math.max(0,Number(p.bonus_minutes)||0),extraBefore),extra=extraBefore-gift,hours=Math.round(extra*p.extra_rate/60),material=Math.round(p.grams*p.material_rate/1000),cut=Math.min(Math.max(0,Number(p.bonus_cents)||0),hours+material);let mat=material,extraCost=hours,left=cut;const fromMat=Math.min(mat,left);mat-=fromMat;left-=fromMat;extraCost-=left;return {minutes:extra,hours:extraCost,grams:p.grams,material:mat};};
+ const pending=open.reduce((n,p)=>{const x=pendingPart(p);n.minutes+=x.minutes;n.hoursCost+=x.hours;n.grams+=x.grams;n.materialCost+=x.material;return n;},{minutes:0,hoursCost:0,grams:0,materialCost:0});
  const count=s=>ps.filter(p=>s.includes(p.status)).length,mem=state.data.membership,membership=mem?{cents:mem.reduce((n,r)=>n+r.cents,0),n:mem.reduce((n,r)=>n+r.n,0)}:null;
  return {per,fam,ps,pending,count,membership,used:sum('used'),held:sum('held'),base:sum('base'),extraMinutes:sum('extraMinutes'),extraCost:sum('extraCost'),materialCost:sum('materialCost'),grams:sum('grams')};
 }
