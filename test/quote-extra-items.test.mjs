@@ -1,0 +1,106 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {spawn} from 'node:child_process';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {once} from 'node:events';
+
+const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+const approve=app.slice(app.indexOf("case'approve-dialog'"),app.indexOf("case'quote-dialog'"));
+const ring={description:'Argola de chaveiro',quantity:14,unitCents:35};
+
+test('a família vê os itens e só a equipe edita',()=>{
+ assert.match(app,/Itens adicionais/);
+ assert.match(app,/data-extra-item/);
+ assert.match(app,/extra-item-add/);
+ assert.match(app,/name="hourPrice"/);
+ assert.match(approve,/extraItemsLines/);
+ assert.doesNotMatch(approve,/data-extra-item/);
+ assert.doesNotMatch(approve,/hourPrice/);
+});
+
+test('itens adicionais entram no total, na proposta e na cobrança',async t=>{
+ const data=await mkdtemp(join(tmpdir(),'maker-extra-'));
+ const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATA_DIR:data,PORT:'3187',HOST:'127.0.0.1'},stdio:['ignore','pipe','pipe']});
+ t.after(async()=>{if(child.exitCode===null){child.kill();await once(child,'exit');}await rm(data,{recursive:true,force:true});});
+ await Promise.race([once(child.stdout,'data'),once(child,'exit').then(()=>{throw new Error('Servidor não iniciou.');})]);
+ const base='http://127.0.0.1:3187',pass='Testing123!';
+ function client(){let cookie='';return async(path,b,status=200)=>{const r=await fetch(base+'/api'+path,{method:b===undefined?'GET':'POST',headers:{...(b===undefined?{}:{'Content-Type':'application/json'}),Cookie:cookie},body:b===undefined?undefined:JSON.stringify(b)});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const value=await r.json();assert.equal(r.status,status,`${path}: ${JSON.stringify(value)}`);return value;};}
+ const admin=client(),guardian=client(),learner=client(),op=client(),fin=client();
+ await admin('/setup',{name:'Emerson',email:'admin@extra.test',password:pass});
+ const family=await admin('/families',{name:'Família Itens',plan:'monthly'});
+ async function enroll(c,role,email){const inv=await admin('/invites',{familyId:family.id,role});await c('/register',{token:inv.token,name:email.split('@')[0],email,password:pass});}
+ await enroll(guardian,'guardian','marina@extra.test');
+ await enroll(learner,'learner','ana@extra.test');
+ async function staff(c,email,accessRole){const inv=await admin('/staff-invites',{email,accessRole});await c('/staff-register',{token:inv.token,name:email.split('@')[0],email,password:pass});}
+ await staff(op,'op@extra.test','operator');
+ await staff(fin,'fin@extra.test','finance');
+ await admin(`/families/${family.id}/edit`,{name:'Família Itens',plan:'monthly',allowance:0});
+ await guardian('/profile',{name:'Marina',whatsapp:'(64) 99999-1234'});
+ async function order(){const p=await guardian('/projects',{name:'Chaveiro',description:'Chaveiro com argola',participant:'Ana',kind:'idea',size:'Pequeno',color:'Azul',quantity:1});await guardian(`/projects/${p.id}/submit`,{});return p;}
+ const quoteBody={minutes:60,grams:100,material:'PLA',note:'Argola à parte do filamento.',bonusCents:200,extraItems:[ring]};
+ const denied=await order();
+ await guardian(`/projects/${denied.id}/quote`,quoteBody,403);
+ await learner(`/projects/${denied.id}/quote`,quoteBody,403);
+ await fin(`/projects/${denied.id}/quote`,quoteBody,403);
+ await fin(`/projects/${denied.id}/quotepreview`,quoteBody,403);
+ const bad=await order();
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:[{description:'',quantity:1,unitCents:35}]},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:[{description:'Argola',quantity:0,unitCents:35}]},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:[{description:'Argola',quantity:1.5,unitCents:35}]},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:[{description:'Argola',quantity:1001,unitCents:35}]},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:[{description:'Argola',quantity:1,unitCents:-1}]},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:[{description:'Argola',quantity:1,unitCents:1000001}]},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:[{description:'x'.repeat(121),quantity:1,unitCents:10}]},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:Array.from({length:21},()=>({description:'Peça',quantity:1,unitCents:1}))},400);
+ await op(`/projects/${bad.id}/quote`,{...quoteBody,extraItems:'argola'},400);
+ const plain=await order();
+ await op(`/projects/${plain.id}/quote`,{minutes:60,grams:100,material:'PLA',note:'Sem item extra.'});
+ const empty=await guardian(`/projects/${plain.id}`);
+ assert.deepEqual(empty.extra_items,[]);
+ assert.equal(empty.quote.total,empty.quote.extraCost+empty.quote.materialCost);
+ assert.equal(empty.quote.itemsCost,0);
+ const preview=await op(`/projects/${bad.id}/quotepreview`,quoteBody);
+ assert.equal(preview.itemsCost,490);
+ assert.equal(preview.extraItems[0].description,'Argola de chaveiro');
+ assert.equal(preview.total,preview.extraCost+preview.materialCost+preview.itemsCost-preview.bonusCents);
+ await op(`/projects/${bad.id}/quote`,quoteBody);
+ const seen=await guardian(`/projects/${bad.id}`);
+ assert.deepEqual(seen.extra_items,[{description:'Argola de chaveiro',quantity:14,unitCents:35}]);
+ assert.equal(seen.quote.extraCost,600);
+ assert.equal(seen.quote.materialCost,1200);
+ assert.equal(seen.quote.itemsCost,490);
+ assert.equal(seen.quote.total,2090);
+ assert.equal(seen.bonus_cents,200);
+ assert.match(seen.events.map(e=>e.text).join('\n'),/Itens adicionais: Argola de chaveiro \(14 ×/);
+ assert.match(seen.events.map(e=>e.text).join('\n'),/Argola à parte do filamento/);
+ const notices=await admin('/messages');
+ assert.match(notices.history.map(m=>m.body).join('\n'),/Argola de chaveiro \(14 ×/);
+ assert.match(notices.history.map(m=>m.body).join('\n'),/itens adicionais/);
+ await guardian(`/projects/${bad.id}/approve`,{total:seen.quote.total-1,included:seen.quote.included},409);
+ await guardian(`/projects/${bad.id}/approve`,{total:2090,included:seen.quote.included});
+ const queued=await guardian(`/projects/${bad.id}`);
+ assert.equal(queued.status,'queued');
+ assert.equal(queued.charge,2090);
+ await op(`/schedule/bookings/${bad.id}/update`,{minutes:120,note:'O fatiamento passou de 1 h para 2 h.'});
+ const requoted=await guardian(`/projects/${bad.id}`);
+ assert.deepEqual(requoted.extra_items,[{description:'Argola de chaveiro',quantity:14,unitCents:35}]);
+ assert.equal(requoted.minutes,120);
+ assert.equal(requoted.charge,1200+1200+490-200);
+ const done=await order();
+ await op(`/projects/${done.id}/quote`,quoteBody);
+ const ready=await guardian(`/projects/${done.id}`);
+ await guardian(`/projects/${done.id}/approve`,{total:ready.quote.total,included:ready.quote.included});
+ await op(`/projects/${done.id}/finish`,{minutes:30,grams:50});
+ const settled=await guardian(`/projects/${done.id}`);
+ assert.equal(settled.status,'ready');
+ assert.equal(settled.charge,300+600+490-200);
+ assert.deepEqual(settled.extra_items,[{description:'Argola de chaveiro',quantity:14,unitCents:35}]);
+ const dash=await guardian('/dashboard');
+ assert.equal(dash.balance.itemsCost,490);
+ assert.ok(dash.balance.total>=settled.charge);
+ await op(`/projects/${plain.id}/quote`,{minutes:60,grams:100,material:'PLA',note:'Continua sem item.',extraItems:[]});
+ assert.deepEqual((await guardian(`/projects/${plain.id}`)).extra_items,[]);
+});
