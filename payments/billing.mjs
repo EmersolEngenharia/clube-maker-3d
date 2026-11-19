@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {AsaasProvider} from './asaas.mjs';
 import {ManualProvider,methods,recurring,ProviderError} from './provider.mjs';
-import {isAdmin,canFinance} from '../permissions.mjs';
+import {isAdmin,canFinance,canOperate} from '../permissions.mjs';
 import {localDate} from '../quota.mjs';
 const now=()=>new Date().toISOString();
 export function nextPeriod(start,plan){const d=new Date(start+'T12:00:00Z'),day=d.getUTCDate();d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+(plan==='annual'?12:1));const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));return d.toISOString().slice(0,10);}
@@ -27,7 +27,8 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
  });}
  async function create(b,u){
   const intent=await db.transaction(async()=>{
-   need(canFinance(u)||u.role==='guardian');const fid=integer(b.familyId||u.family_id,'Família',1,2147483647);need(actor(u,fid));const f=await db.one('SELECT * FROM families WHERE id=?',fid);if(!f)fail('Família não encontrada.',404);
+   const projectStaff=b.purpose==='project'&&(canFinance(u)||canOperate(u));
+   need(canFinance(u)||u.role==='guardian'||projectStaff);const fid=integer(b.familyId||u.family_id,'Família',1,2147483647);need(actor(u,fid)||projectStaff);const f=await db.one('SELECT * FROM families WHERE id=?',fid);if(!f)fail('Família não encontrada.',404);
    const key=str(b.requestKey,'Identificação da cobrança',100),existing=await db.one('SELECT * FROM billing_contracts WHERE request_key=?',key);if(existing){need(actor(u,existing.family_id));return {existing};}
    if(!methods.includes(b.method))fail('Forma de pagamento inválida.');
    const plan=b.plan||f.plan;if(!['monthly','annual'].includes(plan))fail('Plano inválido.');

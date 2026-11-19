@@ -192,6 +192,20 @@ test('modo pré-pago: PIX na validação, troca ao editar e diferença ao conclu
  await f.schedule.tick();assert.equal(f.charges(),3);
 });
 
+test('link de cartão do pedido é reemitido no cartão quando o valor muda; o automático segue PIX',async t=>{
+ const f=await fixture(t),{users:u}=f;
+ const id=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:180,filaments:[{material:'PLA',color:'Azul',grams:80}]}))).id;
+ await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
+ f.advance(60);await f.start(id);await f.finish(id,180,80);
+ const due=(await f.project(id)).charge;
+ await f.billing.create({familyId:1,projectId:id,purpose:'project',method:'card_installments',installments:4,requestKey:`order:${id}:1`,customer:{name:'Ana',email:'a@test.example',document:'12345678909',phone:'5564999991234'}},u.ana);
+ assert.equal(f.charges(),1);
+ await f.db.run('UPDATE projects SET charge=? WHERE id=?',due+500,id);
+ await f.schedule.tick();assert.equal(f.cancels(),1);assert.equal(f.charges(),1);
+ await f.schedule.tick();assert.equal(f.charges(),2);
+ const c=await f.db.one("SELECT * FROM billing_contracts WHERE project_id=? AND status='pending'",id);
+ assert.equal(c.method,'card_installments');assert.equal(c.installments,4);assert.equal(c.amount_cents,due+500);
+});
 test('arquivo que a impressora começou é ligado ao pedido certo, ou a equipe escolhe',()=>{
  const now=at('2026-11-10',9),o=(id,name,h)=>({id,name,starts_at:at('2026-11-10',h).toISOString()});
  const orders=[o(1,'Cortadores de biscoito Papai Noel',14),o(2,'Vaso geométrico',9),o(3,'Chaveiro foguete',16)];

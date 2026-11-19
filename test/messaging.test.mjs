@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createDatabase} from '../db.mjs';
 import {createBilling} from '../payments/billing.mjs';
-import {createAutomation} from '../messaging/automation.mjs';
+import {createAutomation,paymentPhrase} from '../messaging/automation.mjs';
 import {EvolutionClient,whatsappNumber,payerDocument,EvolutionError} from '../messaging/evolution.mjs';
 import {familyReport,previousMonth} from '../messaging/reports.mjs';
 const fail=(m,status=400)=>{throw Object.assign(new Error(m),{status});},str=(v)=>v,integer=(v)=>v;
@@ -21,6 +21,13 @@ async function fixture(t,{annual=false,uncertain=false}={}){
  await db.transaction(()=>automation.enrolled(1,2,{document:'52998224725',whatsapp:'64999991234',plan:annual?'annual':'monthly',installments:12}));
  return {db,billing,automation,created,sent,invoices,at:v=>{date=new Date(v);},unfail:()=>sendFail=false,admin:{id:1,role:'admin'},guardian:{id:2,role:'guardian',family_id:1}};
 }
+test('a frase do link acompanha PIX ou cartão, e 1× não anuncia parcelas',()=>{
+ assert.equal(paymentPhrase('pix_cash'),'Pague por PIX com segurança pelo Asaas');
+ assert.equal(paymentPhrase('pix_recurring'),'Pague por PIX com segurança pelo Asaas');
+ assert.equal(paymentPhrase('card_recurring'),'Pague no cartão com segurança pelo Asaas');
+ assert.equal(paymentPhrase('card_installments',1),'Pague no cartão com segurança pelo Asaas');
+ assert.equal(paymentPhrase('card_installments',3),'Pague no cartão em 3x sem juros com segurança pelo Asaas');
+});
 test('Evolution v2 usa instância, apikey privada e resposta confirmada; documentos e números válidos',async()=>{
  assert.equal(whatsappNumber('(64) 99999-1234'),'5564999991234');assert.equal(whatsappNumber('+55 55 99999-1234'),'5555999991234');assert.equal(whatsappNumber('6433331234'),null);assert.equal(payerDocument('529.982.247-25'),'52998224725');assert.equal(payerDocument('45.356.855/0001-98'),'45356855000198');assert.equal(payerDocument('11111111111'),null);
  const calls=[],client=new EvolutionClient({url:'https://evo.test',key:'secret',instance:'Emerson',fetchImpl:async(url,options)=>{calls.push({url,...options});return {ok:true,json:async()=>options.method==='GET'?{instance:{state:'open'}}:{key:{id:'msg'}}};}});
@@ -33,6 +40,14 @@ test('cadastro emite PIX com vencimento imediato e envia somente ao principal; m
 });
 test('envio incerto exige revisão e não repete automaticamente, mesmo após reinício',async t=>{
  const f=await fixture(t,{uncertain:true});await f.automation.tick();assert.equal((await f.db.one('SELECT status FROM whatsapp_outbox')).status,'needs_review');f.unfail();await f.automation.tick();assert.equal(f.sent.length,0);const j=await f.db.one('SELECT id FROM whatsapp_outbox');await assert.rejects(f.automation.retry(f.guardian,j.id,true),e=>e.status===403);await f.automation.retry(f.admin,j.id,true);await f.automation.tick();assert.equal(f.sent.length,1);
+});
+test('WhatsApp do pedido usa o link e a forma escolhida',async t=>{
+ const f=await fixture(t);
+ await f.db.transaction(()=>f.db.run("INSERT INTO projects(id,family_id,name,description,participant,kind,size,color,quantity,status,minutes,grams,material,charge,created,updated) VALUES(1,1,'Vaso','Peça','Ana','idea','P','Azul',1,'ready',30,10,'PLA',1160,'2026-10-31T12:00:00Z','2026-10-31T12:00:00Z')"));
+ await f.billing.create({familyId:1,projectId:1,purpose:'project',method:'card_installments',installments:3,requestKey:'order:1:1',customer:{name:'Principal',email:'g@test.example',document:'52998224725',phone:'64999991234'}},f.admin);
+ await f.automation.tick();await f.automation.tick();
+ const card=f.sent.find(s=>s.text.includes('Vaso'));
+ assert.ok(card);assert.match(card.text,/Pague no cartão em 3x sem juros com segurança pelo Asaas: https:\/\/www\.asaas\.com\/i\/first/);assert.match(card.text,/Assim que o pagamento cair/);
 });
 test('anual é uma compra parcelada, sem renovar automaticamente; especial não cobra',async t=>{
  const f=await fixture(t,{annual:true});await f.automation.tick();assert.equal(f.created[0].method,'card_installments');assert.equal(f.created[0].installments,12);assert.equal(f.sent.length,1);

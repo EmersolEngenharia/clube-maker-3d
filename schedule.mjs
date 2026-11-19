@@ -377,7 +377,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    let g=null;const actor=async()=>{g=g||await primary(p.family_id);return g?{id:g.id,name:g.name,email:g.email,role:'guardian',family_id:p.family_id}:null;};
    if(state.pending){
     const c=state.pending;
-    if(c.status==='pending'&&c.amount_cents!==due&&c.request_key.startsWith('agenda:')){
+    if(c.status==='pending'&&c.amount_cents!==due&&(c.request_key.startsWith('agenda:')||c.request_key.startsWith('order:'))){
      // The cost changed after the PIX was issued: the old charge is cancelled and a new one follows.
      const who=await actor();if(!who)continue;
      try{await billing.cancel(c.id,who);await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',state.got,stamp(),p.id));}catch{await chargeFailed(p,'Não foi possível cancelar a cobrança anterior, de outro valor.');}
@@ -396,7 +396,11 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    }
    const who=await actor();if(!who){await chargeFailed(p,'A família não tem responsável principal.');continue;}
    if(!Number(g.billing_enabled)){await chargeFailed(p,'A cobrança automática está desativada para esta família.');continue;}
-   try{await billing.create({familyId:p.family_id,projectId:p.id,purpose:'project',method:'pix_cash',requestKey:`agenda:${p.id}:${state.count+1}`,customer:{name:g.name,email:g.email,document:g.document,phone:g.whatsapp||''}},who);}
+   // The first automatic charge stays PIX. A card link the team already issued is reissued as card when the amount changes.
+   const previous=await db.withRequest(()=>one("SELECT method,installments,amount_cents,status FROM billing_contracts WHERE project_id=? ORDER BY created DESC LIMIT 1",p.id));
+   const keepCard=previous?.status==='cancelled'&&previous.method==='card_installments'&&Number(previous.amount_cents)!==due;
+   const method=keepCard?'card_installments':'pix_cash',installments=keepCard?Math.min(12,Math.max(1,Number(previous.installments)||1)):undefined;
+   try{await billing.create({familyId:p.family_id,projectId:p.id,purpose:'project',method,installments,requestKey:`agenda:${p.id}:${state.count+1}`,customer:{name:g.name,email:g.email,document:g.document,phone:g.whatsapp||''}},who);}
    // The gateway's own reason (already stripped of secrets) tells the team what to fix; an unconfirmed answer is never retried blindly.
    catch(e){await chargeFailed(p,e.uncertain?'A resposta do Asaas não foi confirmada. Confira a tela Cobranças antes de tentar de novo.':`O Asaas recusou: ${String(e.message||'motivo não informado').slice(0,300)}`);continue;}
    await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));

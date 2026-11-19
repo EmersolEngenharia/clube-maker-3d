@@ -55,6 +55,23 @@ test('webhook recebido antes da resposta da criação não é sobrescrito',async
  const f=await fixture(t);let billing;const provider={id:'asaas',createCharge:async input=>{await billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_1',gatewaySubscriptionId:'sub_1',externalReference:input.subscriptionId,amountCents:15000});return {gatewayChargeId:'pay_1',gatewaySubscriptionId:'sub_1'};}};
  billing=createBilling({db:f.db,fail,str,integer,config:f.cfg,provider,env:{ASAAS_ENV:'sandbox'}});const c=await billing.create(f.input,f.g);assert.equal(c.status,'active');assert.equal((await f.db.all('SELECT * FROM cash_entries')).length,1);
 });
+test('cartão do pedido confirma como o PIX: baixa, recibo único e parcelas sem duplicar',async t=>{
+ const f=await fixture(t);await f.db.transaction(async()=>{await f.db.run("INSERT INTO users(id,email,name,password,role) VALUES(9,'op@test.example','Op','hash','staff')");await f.db.run("INSERT INTO projects(id,family_id,name,description,participant,kind,size,color,quantity,status,charge,created,updated) VALUES(1,1,'Peça','Teste','Ana','idea','Pequena','Azul',1,'ready',600,?,?)",new Date().toISOString(),new Date().toISOString());});
+ const op={id:9,role:'staff',is_staff:1,team_role:'operator',name:'Op',email:'op@test.example'};
+ await assert.rejects(f.billing.create(f.input,op),e=>e.status===403);
+ const c=await f.billing.create({...f.input,projectId:1,purpose:'project',method:'card_installments',installments:1,requestKey:'card-1'},op);
+ assert.equal(c.method,'card_installments');assert.equal(c.installments,1);assert.equal(c.checkoutUrl,'https://www.asaas.com/i/test');
+ const paid=f.event(c,{amountCents:600,gatewaySubscriptionId:undefined});
+ await f.billing.handleEvent(paid);await f.billing.handleEvent(paid);
+ assert.equal((await f.db.one('SELECT paid FROM projects WHERE id=1')).paid,1);assert.equal((await f.db.all('SELECT * FROM billing_receipts')).length,1);assert.equal((await f.db.one('SELECT SUM(cents) total FROM cash_entries')).total,600);
+ await f.db.transaction(async()=>{await f.db.run("UPDATE projects SET paid=0,charge=900 WHERE id=1");await f.db.run("UPDATE billing_contracts SET status='cancelled' WHERE id=?",c.id);await f.db.run('DELETE FROM billing_receipts');await f.db.run('DELETE FROM cash_entries');});
+ const parts=await f.billing.create({...f.input,projectId:1,purpose:'project',method:'card_installments',installments:3,requestKey:'card-3'},f.admin);
+ await f.billing.handleEvent(f.event(parts,{gatewayChargeId:'pay_1',gatewaySubscriptionId:undefined,gatewayInstallmentId:'inst_1',amountCents:300}));
+ assert.equal((await f.db.one('SELECT paid FROM projects WHERE id=1')).paid,0);
+ await f.billing.handleEvent(f.event(parts,{gatewayChargeId:'pay_2',gatewaySubscriptionId:undefined,gatewayInstallmentId:'inst_1',amountCents:600}));
+ await f.billing.handleEvent(f.event(parts,{gatewayChargeId:'pay_2',gatewaySubscriptionId:undefined,gatewayInstallmentId:'inst_1',amountCents:600}));
+ assert.equal((await f.db.one('SELECT paid FROM projects WHERE id=1')).paid,1);assert.equal((await f.db.all('SELECT * FROM billing_receipts')).length,2);assert.equal((await f.db.one('SELECT SUM(cents) total FROM cash_entries')).total,900);
+});
 test('PIX de projeto concilia sem duplicar no reinício e estorno reabre o pagamento',async t=>{
  const f=await fixture(t);await f.db.transaction(()=>f.db.run("INSERT INTO projects(id,family_id,name,description,participant,kind,size,color,quantity,status,charge,created,updated) VALUES(1,1,'Peça','Teste','Ana','idea','Pequena','Azul',1,'ready',600,?,?)",new Date().toISOString(),new Date().toISOString()));
  const c=await f.billing.create({...f.input,projectId:1,purpose:'project',method:'pix_cash'},f.g);assert.equal(c.amountCents,600);const event=f.event(c,{amountCents:600,gatewaySubscriptionId:undefined});await f.billing.handleEvent(event);
