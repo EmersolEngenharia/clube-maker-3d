@@ -224,8 +224,9 @@ function paFinKey(p){
  return '';
 }
 function orderListed(p,f){return (!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!f.fin||(f.fin==='unpaid'?['due','open'].includes(paFinKey(p)):paFinKey(p)===f.fin));}
-const paFinText={unpaid:'Não pagos (a cobrar ou aguardando)',paid:'Pago',open:'PIX emitido · aguardando',due:'Cobrar / emitir PIX',exempt:'Isento / Bonificado',none:'Sem valor a cobrar'};
-function paFinance(p){const k=paFinKey(p);return k?`<span class="badge pa-fin ${k}">${paFinText[k]}</span>`:'<small class="muted">—</small>';}
+const paFinText={unpaid:'Não pagos (a cobrar ou aguardando)',paid:'Pago',open:'Cobrança emitida · aguardando',due:'Cobrar / emitir PIX',exempt:'Isento / Bonificado',none:'Sem valor a cobrar'};
+function openBillLabel(p){const method=p?.bill_method,installments=Number(p?.bill_installments)||1,card=method==='card_installments'||method==='card_recurring',status=p?.bill_status;if(status==='needs_review')return card?'Cartão em conferência':method?'PIX em conferência':'Cobrança em conferência';if(status==='creating')return 'Emissão em andamento';if(card)return installments>1?`Cartão emitido · aguardando · até ${installments}×`:'Cartão emitido · aguardando';return 'PIX emitido · aguardando';}
+function paFinance(p){const k=paFinKey(p);if(!k)return '<small class="muted">—</small>';const text=k==='open'?openBillLabel(p):paFinText[k];return `<span class="badge pa-fin ${k}">${esc(text)}</span>`;}
 function paListHtml(){
  const f=paState(),rows=paRows(),visible=new Set(rows.map(p=>p.id));for(const id of [...f.sel])if(!visible.has(id))f.sel.delete(id);
  const arrow=k=>f.sort===k?(f.dir==='asc'?' ▲':' ▼'):'',th=(k,l)=>`<th><button type="button" class="text-btn pa-th" data-action="pa-sort" data-sort="${k}">${l}${arrow(k)}</button></th>`;
@@ -239,8 +240,8 @@ const paRefresh=()=>{const el=$('#pa-list');if(el)el.innerHTML=paListHtml();};
 const paText={
  finish:{title:'Finalizar pedidos já impressos',verb:'Finalizar',note:'Só vale para pedidos que estão na fila. Cada um vira "À retirar" com o tempo e o filamento orçados. Nenhum WhatsApp é enviado. O filamento sai do estoque e o PIX segue as regras de cobrança, salvo pedido isento. Se o consumo real foi outro, finalize pelo pedido e marque o aviso se quiser avisar a família.'},
  collect:{title:'Marcar como retirado',verb:'Marcar retirado',note:'Vale para pedidos "À retirar". Pago ou isento vira "Concluído". Com pagamento em aberto fica "Retirado · aguardando pagamento" e conclui sozinho quando o pagamento cair. Nenhum WhatsApp é enviado. O lembrete de retirada para.'},
- exempt:{title:'Marcar como isento / bonificado',verb:'Marcar isento / bonificado',note:'Para peça que não é venda: presente, amostra ou uso interno. Não gera PIX, não entra no caixa e libera a conclusão. Pedido já pago ou com PIX em andamento fica de fora. Nenhum WhatsApp é enviado.'},
- paid:{title:'Marcar como pago',verb:'Marcar pago',note:'Só vale para pedidos à retirar ou concluídos, sem cobrança PIX em andamento, ainda não pagos e que não sejam isentos. Registra o valor total no caixa e avisa a família no WhatsApp.'},
+ exempt:{title:'Marcar como isento / bonificado',verb:'Marcar isento / bonificado',note:'Para peça que não é venda: presente, amostra ou uso interno. Não gera cobrança, não entra no caixa e libera a conclusão. Pedido já pago ou com cobrança em andamento fica de fora. Nenhum WhatsApp é enviado.'},
+ paid:{title:'Marcar como pago',verb:'Marcar pago',note:'Só vale para pedidos à retirar ou concluídos, sem cobrança em andamento, ainda não pagos e que não sejam isentos. Registra o valor total no caixa e avisa a família no WhatsApp.'},
  cancel:{title:'Cancelar pedidos',verb:'Cancelar pedidos',note:'Cancela sem cobrança e libera as horas reservadas. Pedidos já em impressão ou concluídos não são cancelados por aqui.'},
  delete:{title:'Excluir pedidos',verb:'Excluir definitivamente',note:'Apaga o pedido, as mensagens e os arquivos. Só pedidos que nunca foram impressos nem cobrados: os demais ficam no histórico. Não dá para desfazer.'}
 };

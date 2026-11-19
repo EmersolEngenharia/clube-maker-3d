@@ -5,7 +5,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createDatabase} from '../db.mjs';
-import {financiallySettled,ordersInScope,financeKey} from '../domain.mjs';
+import {financiallySettled,ordersInScope,financeKey,openBillLabel} from '../domain.mjs';
 
 function grab(source,name){
  const start=source.search(new RegExp('function '+name+'\\([^)]*\\)\\{'));
@@ -19,7 +19,7 @@ function grab(source,name){
 }
 const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 const ops=readFileSync(new URL('../public/operations.js',import.meta.url),'utf8');
-const ui=new Function(grab(app,'ordersInScope')+'\n'+grab(app,'orderSettled')+'\n'+grab(ops,'paFinKey')+'\n'+grab(ops,'orderListed')+'\nreturn {ordersInScope,orderSettled,paFinKey,orderListed};')();
+const ui=new Function(grab(app,'ordersInScope')+'\n'+grab(app,'orderSettled')+'\n'+grab(ops,'openBillLabel')+'\n'+grab(ops,'paFinKey')+'\n'+grab(ops,'orderListed')+'\nreturn {ordersInScope,orderSettled,openBillLabel,paFinKey,orderListed};')();
 
 const projects=[
  {id:1,status:'review',family_id:1,paid:0,exempt:0,charge:0,name:'Avaliação'},
@@ -74,6 +74,11 @@ test('a tela nomeia À retirar, isento e a visão Não concluídos',()=>{
  assert.match(app,/Não concluídos/);
  assert.match(app,/Concluídos/);
  assert.match(ops,/exempt:'Isento \/ Bonificado'/);
+ assert.match(ops,/open:'Cobrança emitida · aguardando'/);
+ assert.match(ops,/k==='open'\?openBillLabel\(p\)/);
+ assert.match(ops,/com cobrança em andamento/);
+ assert.doesNotMatch(ops,/PIX em andamento|cobrança PIX/);
+ for(const row of [{bill_method:'pix_cash',bill_installments:1},{bill_method:'card_installments',bill_installments:1},{bill_method:'card_installments',bill_installments:3},{bill_open:1},{bill_method:'card_installments',bill_installments:1,bill_status:'needs_review'},{bill_method:'pix_cash',bill_status:'creating'}])assert.equal(ui.openBillLabel(row),openBillLabel(row));
  assert.match(ops,/status:'',family:'',fin:''/);
  assert.match(ops,/À retirar/);
 });
