@@ -225,7 +225,7 @@ function paFinKey(p){
 }
 function orderListed(p,f){return (!f.status||p.status===f.status)&&(!f.family||String(p.family_id)===f.family)&&(!f.fin||(f.fin==='unpaid'?['due','open'].includes(paFinKey(p)):paFinKey(p)===f.fin));}
 const paFinText={unpaid:'Não pagos (a cobrar ou aguardando)',paid:'Pago',open:'Cobrança emitida · aguardando',due:'Cobrar / emitir PIX',exempt:'Isento / Bonificado',none:'Sem valor a cobrar'};
-function openBillLabel(p){const method=p?.bill_method,installments=Number(p?.bill_installments)||1;if(method==='card_installments'||method==='card_recurring')return installments>1?`Cartão emitido · aguardando · até ${installments}×`:'Cartão emitido · aguardando';return 'PIX emitido · aguardando';}
+function openBillLabel(p){const method=p?.bill_method,installments=Number(p?.bill_installments)||1,card=method==='card_installments'||method==='card_recurring',status=p?.bill_status;if(status==='needs_review')return card?'Cartão em conferência':method?'PIX em conferência':'Cobrança em conferência';if(status==='creating')return 'Emissão em andamento';if(card)return installments>1?`Cartão emitido · aguardando · até ${installments}×`:'Cartão emitido · aguardando';return 'PIX emitido · aguardando';}
 function paFinance(p){const k=paFinKey(p);if(!k)return '<small class="muted">—</small>';const text=k==='open'?openBillLabel(p):paFinText[k];return `<span class="badge pa-fin ${k}">${esc(text)}</span>`;}
 function paListHtml(){
  const f=paState(),rows=paRows(),visible=new Set(rows.map(p=>p.id));for(const id of [...f.sel])if(!visible.has(id))f.sel.delete(id);

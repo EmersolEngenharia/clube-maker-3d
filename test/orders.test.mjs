@@ -78,7 +78,7 @@ test('a tela nomeia À retirar, isento e a visão Não concluídos',()=>{
  assert.match(ops,/k==='open'\?openBillLabel\(p\)/);
  assert.match(ops,/com cobrança em andamento/);
  assert.doesNotMatch(ops,/PIX em andamento|cobrança PIX/);
- for(const row of [{bill_method:'pix_cash',bill_installments:1},{bill_method:'card_installments',bill_installments:1},{bill_method:'card_installments',bill_installments:3},{bill_open:1}])assert.equal(ui.openBillLabel(row),openBillLabel(row));
+ for(const row of [{bill_method:'pix_cash',bill_installments:1},{bill_method:'card_installments',bill_installments:1},{bill_method:'card_installments',bill_installments:3},{bill_open:1},{bill_method:'card_installments',bill_installments:1,bill_status:'needs_review'},{bill_method:'pix_cash',bill_status:'creating'}])assert.equal(ui.openBillLabel(row),openBillLabel(row));
  assert.match(ops,/status:'',family:'',fin:''/);
  assert.match(ops,/À retirar/);
 });

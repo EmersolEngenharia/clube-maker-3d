@@ -149,7 +149,7 @@ async function billingRequest(req,res,path){
 const modelCache=new Map(),modelLookups=new Map();
 const modelColumns='CASE WHEN ml.image_key IS NULL THEN 0 ELSE 1 END model_image,ml.site model_site,ml.license model_license,ml.license_checked_at';
 const openBillWhere="bc.project_id=p.id AND bc.status IN ('creating','pending','needs_review')";
-const openBillColumns=`(SELECT bc.method FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_method,(SELECT bc.installments FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_installments,(SELECT 1 FROM billing_contracts bc WHERE ${openBillWhere} LIMIT 1) bill_open,`;
+const openBillColumns=`(SELECT bc.method FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_method,(SELECT bc.installments FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_installments,(SELECT bc.status FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_status,(SELECT 1 FROM billing_contracts bc WHERE ${openBillWhere} LIMIT 1) bill_open,`;
 async function modelPreview(req,res){
  validateRequest(req);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
  const u=await db.withRequest(()=>user(req));authorized(u);if(req.method!=='POST')fail('Rota não encontrada.',404);

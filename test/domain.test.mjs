@@ -63,4 +63,9 @@ test('bonificação abate horas a cobrar e o valor, sem deixar o total negativo'
  assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:1}),'Cartão emitido · aguardando');
  assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:3}),'Cartão emitido · aguardando · até 3×');
  assert.equal(openBillLabel({bill_method:'card_recurring'}),'Cartão emitido · aguardando');
+ assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:1,bill_status:'pending'}),'Cartão emitido · aguardando');
+ assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:3,bill_status:'needs_review'}),'Cartão em conferência');
+ assert.equal(openBillLabel({bill_method:'pix_cash',bill_status:'needs_review'}),'PIX em conferência');
+ assert.equal(openBillLabel({bill_status:'needs_review'}),'Cobrança em conferência');
+ assert.equal(openBillLabel({bill_method:'pix_cash',bill_status:'creating'}),'Emissão em andamento');
 });

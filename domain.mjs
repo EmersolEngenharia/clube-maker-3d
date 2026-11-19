@@ -15,11 +15,15 @@ export function ordersInScope(projects, filter){
   if(filter==='all') return projects;
   return projects.filter(p=>p.status!=='completed'&&p.status!=='cancelled');
 }
-// Badge for a charge already issued and still open. Card with one installment does not announce parcelas.
+// Pending charges say they were issued. needs_review and creating have no checkout yet, so they must not.
 export function openBillLabel(project){
   const method=project?.bill_method;
   const installments=Number(project?.bill_installments)||1;
-  if(method==='card_installments'||method==='card_recurring') return installments>1?`Cartão emitido · aguardando · até ${installments}×`:'Cartão emitido · aguardando';
+  const card=method==='card_installments'||method==='card_recurring';
+  const status=project?.bill_status;
+  if(status==='needs_review') return card?'Cartão em conferência':method?'PIX em conferência':'Cobrança em conferência';
+  if(status==='creating') return 'Emissão em andamento';
+  if(card) return installments>1?`Cartão emitido · aguardando · até ${installments}×`:'Cartão emitido · aguardando';
   return 'PIX emitido · aguardando';
 }
 export function financeKey(project){
