@@ -37,8 +37,9 @@ export function chargeWithBonus({extraMinutes, extraRate, materialCost, bonusMin
   const gifted = Math.min(Math.max(0, Math.floor(Number(bonusMinutes) || 0)), extraBefore);
   const extra = extraBefore - gifted;
   const extraCost = Math.round(extra * rate / 60);
+  const extraCostBefore = Math.round(extraBefore * rate / 60);
   const material = Math.max(0, Math.round(Number(materialCost) || 0));
-  const hourBonusValue = Math.round(gifted * rate / 60);
+  const hourBonusValue = extraCostBefore - extraCost;
   const gross = extraCost + material;
   const money = Math.min(Math.max(0, Math.floor(Number(bonusCents) || 0)), gross);
   let reportedMaterial = material, reportedExtra = extraCost, left = money;
@@ -46,13 +47,20 @@ export function chargeWithBonus({extraMinutes, extraRate, materialCost, bonusMin
   reportedMaterial -= fromMaterial;
   left -= fromMaterial;
   reportedExtra -= left;
-  return {extra, extraBefore, bonusMinutes: gifted, extraCost, materialCost: material, hourBonusValue, bonusCents: money, reportedExtra, reportedMaterial, total: gross - money};
+  return {extra, extraBefore, bonusMinutes: gifted, extraCost, extraCostBefore, materialCost: material, hourBonusValue, bonusCents: money, reportedExtra, reportedMaterial, total: gross - money};
 }
 export function pricedQuote({minutes, grams, available, extraRate, materialRate, bonusMinutes=0, bonusCents=0}) {
   const a = allocation(Math.max(0, Number(minutes) || 0), available, extraRate);
   const materialCost = Math.round(Math.max(0, Number(grams) || 0) * Math.max(0, Number(materialRate) || 0) / 1000);
   const priced = chargeWithBonus({extraMinutes: a.extra, extraRate, materialCost, bonusMinutes, bonusCents});
   return {minutes, grams, included: a.included, ...priced, materialRate: Number(materialRate) || 0, extraRate: Number(extraRate) || 0, timeValue: Math.round((Number(minutes) || 0) * (Number(extraRate) || 0) / 60), creditValue: Math.round(a.included * (Number(extraRate) || 0) / 60)};
+}
+// Splits a stored charge into hours and filament after gifted hours, so a message does not bill the same hour twice.
+export function quoteCostParts(p) {
+  const extraBefore = Math.max(0, (Number(p?.minutes) || 0) - (Number(p?.included) || 0));
+  const gifted = Math.min(Math.max(0, Math.floor(Number(p?.bonus_minutes) || 0)), extraBefore);
+  const hours = Math.min(Number(p?.charge) || 0, Math.round((extraBefore - gifted) * (Number(p?.extra_rate) || 0) / 60));
+  return {hours, material: (Number(p?.charge) || 0) - hours, gifted};
 }
 export function hoursLine({included=0, extra=0, bonusMinutes=0}={}) {
   const h = m => `${Number((Number(m) / 60).toFixed(1)).toLocaleString('pt-BR')} h`;

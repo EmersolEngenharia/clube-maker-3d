@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {period,allocation,settle,balance,pricedQuote,hoursLine,chargeWithBonus,financiallySettled,monthlyUsage} from '../domain.mjs';
+import {period,allocation,settle,balance,pricedQuote,hoursLine,chargeWithBonus,quoteCostParts,financiallySettled,monthlyUsage} from '../domain.mjs';
 test('períodos usam Brasília, inclusive na virada do mês',()=>{assert.equal(period(new Date('2026-11-01T02:59:59Z')),'2026-10');assert.equal(period(new Date('2026-11-01T03:00:00Z')),'2026-11');});
 test('franquia não fica negativa e excedente é proporcional',()=>{assert.deepEqual(allocation(125,100,600),{included:100,extra:25,extraCost:250});assert.deepEqual(allocation(60,-10,600),{included:0,extra:60,extraCost:600});});
 test('consumo real menor reduz horas e material; excedentes nunca aumentam cobrança',()=>{const p={minutes:120,included:90,grams:100,extra_rate:600,material_rate:12000};assert.deepEqual(settle(p,80,50),{used:80,charge:600});assert.deepEqual(settle(p,200,200),{used:90,charge:1500});assert.deepEqual(settle(p,100,100),{used:90,charge:1300});});
@@ -26,4 +26,8 @@ test('bonificação abate horas a cobrar e o valor, sem deixar o total negativo'
  const month='2026-11',base={period:month,extra_rate:600,material_rate:12000,minutes:120,included:60,grams:10,status:'queued',bonus_minutes:30};
  assert.equal(monthlyUsage([base],720,month).pendingExtra,300);
  assert.equal(monthlyUsage([{...base,bonus_minutes:0}],720,month).pendingExtra,600);
+ const quoted=pricedQuote({minutes:120,grams:100,available:0,extraRate:600,materialRate:12000,bonusMinutes:60});
+ assert.equal(quoted.extraCostBefore-quoted.extraCost,quoted.hourBonusValue);
+ assert.equal(quoted.extraCost+quoted.materialCost,quoted.total);
+ assert.deepEqual(quoteCostParts({minutes:120,included:0,bonus_minutes:60,extra_rate:600,charge:quoted.total}),{hours:quoted.extraCost,material:quoted.materialCost,gifted:60});
 });

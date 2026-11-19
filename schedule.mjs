@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {isTeam,isAdmin,canOperate} from './permissions.mjs';
-import {period,allocation,pricedQuote,chargeWithBonus} from './domain.mjs';
+import {period,allocation,pricedQuote,chargeWithBonus,quoteCostParts} from './domain.mjs';
 import {analyzePrintFile} from './slicer.mjs';
 import {whatsappNumber} from './messaging/evolution.mjs';
 
@@ -141,9 +141,10 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  const costLine=p=>{
   const gifted=Number(p.bonus_minutes)>0||Number(p.bonus_cents)>0;
   if(!(p.charge>0))return gifted?'Sem valor adicional: a equipe bonificou este orçamento.':'Cabe na cota da família, sem valor adicional previsto.';
-  const extra=Math.max(0,(p.minutes||0)-(p.included||0)),hours=Math.min(p.charge,Math.round(extra*(p.extra_rate||0)/60)),material=p.charge-hours;
+  const split=quoteCostParts(p),hours=split.hours,material=split.material;
   const parts=[hours>0?`${money(hours)} de horas além da cota`:'',material>0?`${money(material)} de filamento`:''].filter(Boolean);
-  return `Valor previsto: ${money(p.charge)}${p.minutes===undefined?'':hours>0?` (${parts.join(' + ')})`:` (filamento; as horas cabem na cota)`}.${gifted?' Inclui bonificação da equipe.':''}`;
+  const detail=p.minutes===undefined?'':hours>0?` (${parts.join(' + ')})`:split.gifted>0?' (horas extras bonificadas)':' (filamento; as horas cabem na cota)';
+  return `Valor previsto: ${money(p.charge)}${detail}.${gifted?' Inclui bonificação da equipe.':''}`;
  };
  async function applyReflow(by=null){
   const cfg=await settings(),list=await intervals(),fixed=list.filter(i=>i.block||i.status==='printing'),queued=list.filter(i=>i.id&&i.status!=='printing'),moved=reflow(cfg,fixed,queued);

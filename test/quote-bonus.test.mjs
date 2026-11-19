@@ -8,6 +8,14 @@ import {join} from 'node:path';
 import {once} from 'node:events';
 
 const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+function grab(source,name){
+ const start=source.search(new RegExp('function '+name+'\\([^)]*\\)\\{'));
+ if(start<0) throw new Error('Função não encontrada: '+name);
+ let depth=0,end=start;
+ for(;end<source.length;end++){if(source[end]==='{')depth++;else if(source[end]==='}'&&--depth===0){end++;break;}}
+ return source.slice(start,end);
+}
+const ui=new Function(grab(app,'hoursLineText')+'\n'+grab(app,'quoteView')+'\nreturn {quoteView};')();
 
 test('a proposta e a bonificação aparecem no pedido e na aprovação',()=>{
  assert.match(app,/Proposta à família/);
@@ -18,6 +26,17 @@ test('a proposta e a bonificação aparecem no pedido e na aprovação',()=>{
  assert.match(app,/Sem saldo: \$\{h\(extra\)\} extras/);
  assert.match(app,/Usa \$\{h\(included\)\} do saldo \+ \$\{h\(extra\)\} extras/);
  assert.match(app,/min · \$\{hours\(p\.minutes\)\}/);
+ assert.match(app,/extraCostBefore/);
+ const quote={included:0,extra:60,extraCost:600,extraCostBefore:1200,bonusMinutes:60,hourBonusValue:600,bonusCents:0,materialCost:120,total:720,hoursLine:'Sem saldo: 1 h extras · 1 h bonificadas'};
+ const base={minutes:120,grams:10,included:0,charge:0,extra_rate:600,material_rate:12000,bonus_minutes:60,bonus_cents:0,quote};
+ for(const status of ['approval','question','review','failed']){
+  const view=ui.quoteView({...base,status});
+  assert.equal(view.total,720,status);
+  assert.equal(view.extraCostBefore-view.extraCost,600,status);
+ }
+ const queued=ui.quoteView({...base,status:'queued',charge:500,included:60,quote:{...quote,total:999}});
+ assert.equal(queued.total,500);
+ assert.equal(queued.extraCostBefore,queued.extraCost+queued.hourBonusValue);
 });
 
 test('orçamento grava a proposta e a bonificação para a equipe e a família',async t=>{
