@@ -188,3 +188,20 @@ export function monthlyUsage(projects, allowance, month) {
   }
   return {...result,total:result.extraCost+result.materialCost+result.itemsCost};
 }
+
+// Earlier parcels share the floor; the last one keeps the remainder so the cents add up exactly.
+export function splitCents(total, n){
+  const count=Number(n), amount=Number(total), base=Math.floor(amount/count);
+  const parts=Array.from({length:count},()=>base);
+  parts[count-1]=amount-base*(count-1);
+  return parts;
+}
+// Same day of the month, shifted. A day the target month does not have (31 Jan → Feb) lands on its last day.
+export function addMonths(iso, delta){
+  const [y,m,d]=iso.split('-').map(Number), index=m-1+delta;
+  const year=y+Math.floor(index/12), month=((index%12)+12)%12;
+  const last=new Date(Date.UTC(year, month+1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(d, last))).toISOString().slice(0,10);
+}
+// Cash lines of one stock purchase. Distinct from the printer contribution, which uses installment:<grupo>:<k>.
+export function installmentSourceKey(entryId, k){return `installment:stock:${entryId}:${k}`;}
