@@ -15,6 +15,13 @@ export function ordersInScope(projects, filter){
   if(filter==='all') return projects;
   return projects.filter(p=>p.status!=='completed'&&p.status!=='cancelled');
 }
+// Badge for a charge already issued and still open. Card with one installment does not announce parcelas.
+export function openBillLabel(project){
+  const method=project?.bill_method;
+  const installments=Number(project?.bill_installments)||1;
+  if(method==='card_installments'||method==='card_recurring') return installments>1?`Cartão emitido · aguardando · até ${installments}×`:'Cartão emitido · aguardando';
+  return 'PIX emitido · aguardando';
+}
 export function financeKey(project){
   if(Number(project?.paid)) return 'paid';
   if(Number(project?.exempt)) return 'exempt';

@@ -59,4 +59,12 @@ test('equipe gera o link do pedido; a família vê a cobrança e o padrão conti
  assert.equal(pix.method,'pix_cash');assert.equal(pix.installments,1);assert.equal(pix.issued,true);
  const pixSeen=await guardian(`/projects/${pixId}`);
  assert.equal(pixSeen.payment.method,'pix_cash');assert.match(pixSeen.events.at(-1).text,/emitida via PIX/);assert.match(pixSeen.events.at(-1).text,/WhatsApp não foi enviado/);
+ const listed=await admin('/dashboard'),cardRow=listed.projects.find(p=>p.id===cardId),pixRow=listed.projects.find(p=>p.id===pixId);
+ assert.equal(cardRow.bill_method,'card_installments');assert.equal(Number(cardRow.bill_installments),3);assert.equal(Number(cardRow.bill_open),1);
+ assert.equal(pixRow.bill_method,'pix_cash');assert.equal(Number(pixRow.bill_installments),1);
+ const familyList=await guardian('/dashboard');
+ assert.equal(familyList.projects.find(p=>p.id===cardId).bill_method,'card_installments');
+ const one=await quoted();
+ await admin(`/projects/${one}/charge`,{method:'card_installments',installments:1});
+ assert.equal(Number((await admin('/dashboard')).projects.find(p=>p.id===one).bill_installments),1);
 });
