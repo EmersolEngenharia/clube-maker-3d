@@ -41,6 +41,9 @@ function str(value,label,max=500){if(typeof value!=='string'||!value.trim()||val
 function num(v,label,min,max){if(typeof v!=='number'||!Number.isFinite(v)||v<min||v>max)fail(`${label}: valor inválido.`);return v;}
 function integer(v,label,min,max){num(v,label,min,max);if(!Number.isInteger(v))fail(`${label}: use um número inteiro.`);return v;}
 function optInt(v,label,min,max){if(v===undefined||v===null||v==='')return 0;return integer(v,label,min,max);}
+function materialDefaultRate(m,c){return Math.round(m.cost*(1+c.markup/100));}
+function quoteRates(b,c,m){const extraDefault=c.extra,materialDefault=materialDefaultRate(m,c);const extraRate=b.extraRate===undefined||b.extraRate===null||b.extraRate===''?extraDefault:integer(b.extraRate,'Valor da hora',0,10000000);const materialRate=b.materialRate===undefined||b.materialRate===null||b.materialRate===''?materialDefault:integer(b.materialRate,'Valor do filamento',0,10000000);return {extraRate,materialRate,custom:extraRate!==extraDefault||materialRate!==materialDefault?1:0};}
+const brMoney=cents=>(cents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 function creds(b){const email=str(b.email,'E-mail',150).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('Informe um e-mail válido.');if(typeof b.password!=='string'||b.password.length<6||b.password.length>200)fail('Use uma senha entre 6 e 200 caracteres.');return email;}
 async function event(id,text){(await run('INSERT INTO events(project_id,text,created) VALUES(?,?,?)',id,text,now()));}
 const attempts=new Map();
@@ -283,10 +286,10 @@ async function handle(req,res){
       if(action==='quotepreview'){
         authorized(u,canOperate(u)?null:['admin']);
         const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
-        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),bal=await familyBalance(p.family_id),rate=Math.round(m.cost*(1+c.markup/100));
+        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),bal=await familyBalance(p.family_id),rates=quoteRates(b,c,m);
         const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000);
         if(bonusMinutes>minutes)fail('A bonificação de horas não pode passar do tempo do orçamento.');
-        const q=pricedQuote({minutes,grams,available:bal.available,extraRate:c.extra,materialRate:rate,bonusMinutes,bonusCents});
+        const q=pricedQuote({minutes,grams,available:bal.available,extraRate:rates.extraRate,materialRate:rates.materialRate,bonusMinutes,bonusCents});
         return json(res,{...q,balance:bal.available,balanceAfter:bal.available-q.included,hoursLine:hoursLine(q)});
       }
       if(action==='edit'){
@@ -330,10 +333,10 @@ async function handle(req,res){
         authorized(u,canOperate(u)?null:['admin']);if(!['review','question','approval','failed'].includes(p.status))fail('O projeto precisa estar em avaliação para receber um orçamento.');
         const model=p.kind==='link'?(await one('SELECT license,license_checked_at FROM model_links WHERE project_id=?',id)):null;if(model&&licenseLevel(model.license)!=='open'&&!model.license_checked_at)fail('Confira a licença do modelo antes de preparar o orçamento.');
         const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
-        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),note=str(b.note,'Orientação',1000);
+        const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),note=str(b.note,'Orientação',1000),rates=quoteRates(b,c,m);
         const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000);
         if(bonusMinutes>minutes)fail('A bonificação de horas não pode passar do tempo do orçamento.');
-        (await run("UPDATE projects SET status='approval',minutes=?,grams=?,material=?,material_rate=?,extra_rate=?,quote_note=?,bonus_minutes=?,bonus_cents=?,updated=? WHERE id=?",minutes,grams,m.name,Math.round(m.cost*(1+c.markup/100)),c.extra,note,bonusMinutes,bonusCents,now(),id));(await event(id,`Orçamento preparado. Proposta à família: ${note.replace(/[.!?…]\s*$/,'')}. Aguardando aprovação do responsável.`));{const fresh=(await project(id,u));await schedule.onQuoted(fresh,u,await quote(fresh));}
+        (await run("UPDATE projects SET status='approval',minutes=?,grams=?,material=?,material_rate=?,extra_rate=?,quote_note=?,bonus_minutes=?,bonus_cents=?,custom_rates=?,updated=? WHERE id=?",minutes,grams,m.name,rates.materialRate,rates.extraRate,note,bonusMinutes,bonusCents,rates.custom,now(),id));(await event(id,`Orçamento preparado. Proposta à família: ${note.replace(/[.!?…]\s*$/,'')}.${rates.custom?` Valores ajustados pela equipe: hora ${brMoney(rates.extraRate)} e filamento ${brMoney(rates.materialRate)}/kg.`:''} Aguardando aprovação do responsável.`));{const fresh=(await project(id,u));await schedule.onQuoted(fresh,u,await quote(fresh));}
       }
       else if(action==='license'){authorized(u,canOperate(u)?null:['admin']);if(b.checked!==true)fail('Confirme que conferiu a licença do modelo.');if(!['draft','review','question','approval','failed'].includes(p.status))fail('A licença é conferida antes do orçamento.');if(!(await run('UPDATE model_links SET license_checked_by=?,license_checked_at=? WHERE project_id=? AND license_checked_at IS NULL',u.id,now(),id)).changes)fail('Este pedido não tem licença para conferir.',409);(await event(id,'A equipe conferiu a licença do modelo e liberou a impressão.'));}
       else if(action==='approve'){

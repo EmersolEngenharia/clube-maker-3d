@@ -181,7 +181,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  // Avisa o responsável de que há um orçamento esperando: valor, uso da cota e o link para aprovar.
  async function onQuoted(p,u,q){
   const hours=m=>`${Number((m/60).toFixed(1)).toLocaleString('pt-BR')} h`;
-  await tellFamily(p.family_id,`Olá, {nome}! O orçamento do pedido ${number(p.id)} "${p.name}" está pronto. Tempo estimado: ${span(p.minutes)} (${p.minutes} min, ${p.grams} g de ${p.material}). ${q.hoursLine}. ${costLine({...p,charge:q.total,included:q.included})} Proposta: ${p.quote_note}\nAo aprovar${q.total>0?', o PIX é gerado e':''} o pedido entra na fila de impressão. Confira e aprove: ${link(p.id)}`,u?.id);
+  await tellFamily(p.family_id,`Olá, {nome}! O orçamento do pedido ${number(p.id)} "${p.name}" está pronto. Tempo estimado: ${span(p.minutes)} (${p.minutes} min, ${p.grams} g de ${p.material}). ${q.hoursLine}. ${costLine({...p,charge:q.total,included:q.included})}${Number(p.custom_rates)?` Valores deste pedido: hora ${money(p.extra_rate)} e filamento ${money(p.material_rate)}/kg.`:''} Proposta: ${p.quote_note}\nAo aprovar${q.total>0?', o PIX é gerado e':''} o pedido entra na fila de impressão. Confira e aprove: ${link(p.id)}`,u?.id);
  }
  async function beforeStart(p){
   const s=await slotOf(p.id);if(!s)return;
