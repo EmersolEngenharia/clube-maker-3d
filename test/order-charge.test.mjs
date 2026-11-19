@@ -17,6 +17,8 @@ test('a tela do pedido deixa a equipe escolher PIX ou cartão, com 1× como padr
  assert.match(app,/name="installments" disabled/);
  assert.match(app,/paymentBlock\(p\)/);
  assert.match(app,/Pagar no cartão/);
+ assert.match(app,/Parcelas em andamento/);
+ assert.match(app,/Ver cobrança no Asaas/);
  assert.match(app,/Pagar com PIX/);
  assert.match(billingUi,/Cartão — link de pagamento \(até 12× sem juros\)/);
  assert.match(billingUi,/pix_cash:'PIX avulso'/);

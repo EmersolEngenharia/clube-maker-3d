@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {isTeam,isAdmin,canOperate} from './permissions.mjs';
 import {period,allocation,pricedQuote,chargeWithBonus,quoteCostParts} from './domain.mjs';
 import {analyzePrintFile} from './slicer.mjs';
+import {outstandingInstallments} from './payments/billing.mjs';
 import {whatsappNumber} from './messaging/evolution.mjs';
 
 // Printer calendar. Every approved order holds one time slot; members book their own slot and the team validates it.
@@ -373,7 +374,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const rows=await db.withRequest(()=>all("SELECT p.*,s.charged_cents,s.validated_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.charge>0 AND p.exempt=0 AND s.charge_error IS NULL AND p.status IN ('queued','printing','ready','completed') ORDER BY p.id"));
   for(const p of rows){try{
    if(['queued','printing'].includes(p.status)&&cfg.chargeWhen!=='approval'&&!(cfg.chargeWhen==='validation'&&p.validated_at))continue;
-   const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)})),due=p.charge-state.got;
+   const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND (status IN ('creating','pending','needs_review') OR "+outstandingInstallments+")",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)})),due=p.charge-state.got;
    let g=null;const actor=async()=>{g=g||await primary(p.family_id);return g?{id:g.id,name:g.name,email:g.email,role:'guardian',family_id:p.family_id}:null;};
    if(state.pending){
     const c=state.pending;

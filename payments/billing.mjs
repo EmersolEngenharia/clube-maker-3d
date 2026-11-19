@@ -4,6 +4,8 @@ import {ManualProvider,methods,recurring,ProviderError} from './provider.mjs';
 import {isAdmin,canFinance,canOperate} from '../permissions.mjs';
 import {localDate} from '../quota.mjs';
 const now=()=>new Date().toISOString();
+// A card plan stays open after the first installment: the contract is active, but later parcels still cover the same charge.
+export const outstandingInstallments="(method='card_installments' AND installments>1 AND status='active' AND amount_cents>(SELECT COALESCE(SUM(amount_cents),0) FROM billing_receipts WHERE contract_id=billing_contracts.id AND status='paid'))";
 export function nextPeriod(start,plan){const d=new Date(start+'T12:00:00Z'),day=d.getUTCDate();d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+(plan==='annual'?12:1));const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));return d.toISOString().slice(0,10);}
 const daysAhead=n=>{const d=new Date(localDate()+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
 const validDay=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v+'T12:00:00Z'))?v:null;
@@ -37,7 +39,7 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
    const projectId=b.projectId?integer(b.projectId,'Projeto',1,2147483647):null,cfg=await config();let amount=plan==='annual'?cfg.annual:cfg.monthly;
    if(projectId){const p=await db.one('SELECT * FROM projects WHERE id=? AND family_id=?',projectId,fid);if(!p||!['queued','printing','ready','completed'].includes(p.status)||p.paid)fail('O projeto precisa estar aprovado e sem pagamento.');if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');if(recurring(b.method))fail('Impressões avulsas não podem gerar assinatura.');amount=p.charge-await projectReceived(projectId);}
    integer(amount,'Valor em centavos',1,10000000);
-   const pending=await db.one("SELECT id FROM billing_contracts WHERE family_id=? AND purpose=? AND (status IN ('creating','pending','needs_review') OR (provider='asaas' AND method IN ('pix_recurring','card_recurring') AND status IN ('active','past_due')))"+(projectId?' AND project_id=?':''),fid,projectId?'project':'membership',...(projectId?[projectId]:[]));
+   const pending=await db.one("SELECT id FROM billing_contracts WHERE family_id=? AND purpose=? AND (status IN ('creating','pending','needs_review') OR (provider='asaas' AND method IN ('pix_recurring','card_recurring') AND status IN ('active','past_due')) OR "+outstandingInstallments+")"+(projectId?' AND project_id=?':''),fid,projectId?'project':'membership',...(projectId?[projectId]:[]));
    if(pending)fail('Já existe cobrança ou recorrência em andamento. Abra a cobrança existente antes de criar outra.',409);
    const customer=b.customer||{},name=str(customer.name||u.name,'Nome do responsável',100),email=str(customer.email||u.email,'E-mail',150),document=String(customer.document||'').replace(/\D/g,''),phone=typeof customer.phone==='string'?customer.phone.slice(0,30):'';
    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('E-mail inválido.');if(enabled&&!/^(\d{11}|\d{14})$/.test(document))fail('Informe o CPF ou CNPJ do pagador para emitir a cobrança.');

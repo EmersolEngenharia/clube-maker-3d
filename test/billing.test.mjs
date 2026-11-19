@@ -4,7 +4,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createDatabase} from '../db.mjs';
-import {createBilling} from '../payments/billing.mjs';
+import {createBilling,outstandingInstallments} from '../payments/billing.mjs';
 import {createOperations} from '../operations.mjs';
 import {localDate} from '../quota.mjs';
 const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status});},str=(v,label,max)=>{if(typeof v!=='string'||!v.trim()||v.length>max)fail(label);return v.trim();},integer=(v,label,min,max)=>{if(!Number.isSafeInteger(v)||v<min||v>max)fail(label);return v;};
@@ -68,6 +68,9 @@ test('cartão do pedido confirma como o PIX: baixa, recibo único e parcelas sem
  const parts=await f.billing.create({...f.input,projectId:1,purpose:'project',method:'card_installments',installments:3,requestKey:'card-3'},f.admin);
  await f.billing.handleEvent(f.event(parts,{gatewayChargeId:'pay_1',gatewaySubscriptionId:undefined,gatewayInstallmentId:'inst_1',amountCents:300}));
  assert.equal((await f.db.one('SELECT paid FROM projects WHERE id=1')).paid,0);
+ await assert.rejects(f.billing.create({...f.input,projectId:1,purpose:'project',method:'pix_cash',requestKey:'card-extra'},f.admin),e=>e.status===409);
+ const visible=await f.db.one('SELECT status,method,installments FROM billing_contracts WHERE project_id=1 AND (status IN (\'creating\',\'pending\',\'needs_review\',\'past_due\') OR '+outstandingInstallments+')');
+ assert.deepEqual([visible.status,visible.method,visible.installments],['active','card_installments',3]);
  await f.billing.handleEvent(f.event(parts,{gatewayChargeId:'pay_2',gatewaySubscriptionId:undefined,gatewayInstallmentId:'inst_1',amountCents:600}));
  await f.billing.handleEvent(f.event(parts,{gatewayChargeId:'pay_2',gatewaySubscriptionId:undefined,gatewayInstallmentId:'inst_1',amountCents:600}));
  assert.equal((await f.db.one('SELECT paid FROM projects WHERE id=1')).paid,1);assert.equal((await f.db.all('SELECT * FROM billing_receipts')).length,2);assert.equal((await f.db.one('SELECT SUM(cents) total FROM cash_entries')).total,900);
