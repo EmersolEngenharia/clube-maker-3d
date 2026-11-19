@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {isTeam,isAdmin,canOperate} from './permissions.mjs';
-import {period,allocation,pricedQuote,chargeWithBonus,quoteCostParts,extraItemsCost,extraItemsText} from './domain.mjs';
+import {period,allocation,pricedQuote,chargeWithBonus,quoteCostParts,extraItemsCost,extraItemsText,chargeHistory} from './domain.mjs';
 import {analyzePrintFile} from './slicer.mjs';
 import {outstandingInstallments} from './payments/billing.mjs';
 import {whatsappNumber} from './messaging/evolution.mjs';
@@ -255,13 +255,13 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const cfg=await settings(),team=isTeam(u),day=url.searchParams.get('from'),days=Math.min(31,Math.max(1,Number(url.searchParams.get('days'))||7));
   const from=/^\d{4}-\d{2}-\d{2}$/.test(day||'')?fromLocal(day):fromLocal(localDay(clock())),to=new Date(from.getTime()+days*1440*MIN);
   const d=await db.snapshot({
-   range:{sql:slotSQL+" WHERE p.status IN ('approval','queued','printing','ready','completed') AND s.ends_at>? AND s.starts_at<? ORDER BY s.starts_at",params:[from.toISOString(),to.toISOString()]},
+   range:{sql:slotSQL+" WHERE p.status IN ('approval','queued','printing','ready','picked','completed') AND s.ends_at>? AND s.starts_at<? ORDER BY s.starts_at",params:[from.toISOString(),to.toISOString()]},
    open:{sql:slotSQL+" WHERE p.status IN ('approval','queued','printing','ready')"+(team?'':' AND p.family_id=?')+' ORDER BY s.starts_at',params:team?[]:[u.family_id??-1]},
    blocks:{sql:'SELECT id,starts_at,ends_at,reason FROM schedule_blocks WHERE ends_at>? AND starts_at<? ORDER BY starts_at',params:[from.toISOString(),to.toISOString()]}
   });
   const visible=r=>team||(u.family_id&&r.family_id===u.family_id),nowMs=clock().getTime();
   // A late queued slot of another family is not shown as busy: its time is already gone.
-  const slots=d.range.filter(r=>visible(r)||['printing','ready','completed'].includes(r.status)||Date.parse(r.ends_at)>nowMs).map(r=>visible(r)?detail(r,u):{start:r.starts_at,end:r.ends_at,busy:true});
+  const slots=d.range.filter(r=>visible(r)||['printing','ready','picked','completed'].includes(r.status)||Date.parse(r.ends_at)>nowMs).map(r=>visible(r)?detail(r,u):{start:r.starts_at,end:r.ends_at,busy:true});
   const {teamWhatsapp,...shared}=cfg;
   return {now:stamp(),from:from.toISOString(),days,settings:isAdmin(u)?cfg:shared,slots,bookings:d.open.map(r=>detail(r,u)),blocks:d.blocks.map(b=>({...(team?{id:b.id}:{}),start:b.starts_at,end:b.ends_at,reason:b.reason})),canBook:Boolean(u.family_id)&&['guardian','learner','admin'].includes(u.role),canManage:canOperate(u),canConfigure:isAdmin(u)};
  }
@@ -330,7 +330,42 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   await startNow(p,u,'Impressão ligada pela equipe ao trabalho que a impressora começou.');return {ok:true};
  }
  async function startNow(p,u,text){await run("UPDATE projects SET status='printing',updated=? WHERE id=?",stamp(),p.id);await event(p.id,text);await onStarted(p,u);}
- async function retryCharge(u,id){if(!canOperate(u)&&!isAdmin(u))fail('Acesso operacional necessário.',403);const {p}=await own(id,u),got=await received(id);if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');if(p.paid||p.charge<=got)fail('Este pedido não tem valor em aberto.');await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',got,stamp(),id);return {ok:true};}
+ function chargeView(c,{whatsapp=false,already=false}={}){return {issued:true,already,amountCents:Number(c.amountCents??c.amount_cents),method:c.method,installments:Number(c.installments)||1,checkoutUrl:c.checkoutUrl||c.checkout_url||null,whatsapp:whatsapp===true,status:c.status};}
+ async function issueOne(p,cfg){
+  if(['queued','printing'].includes(p.status)&&cfg.chargeWhen!=='approval'&&!(cfg.chargeWhen==='validation'&&p.validated_at))return {skipped:'momento'};
+  const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND (status IN ('creating','pending','needs_review') OR "+outstandingInstallments+")",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)})),due=p.charge-state.got;
+  let g=null;const actor=async()=>{g=g||await primary(p.family_id);return g?{id:g.id,name:g.name,email:g.email,role:'guardian',family_id:p.family_id}:null;};
+  if(state.pending){
+   const c=state.pending;
+   if(c.status==='pending'&&c.amount_cents!==due&&(c.request_key.startsWith('agenda:')||c.request_key.startsWith('order:'))){
+    const who=await actor();if(!who)return {skipped:'sem responsável'};
+    try{await billing.cancel(c.id,who);await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',state.got,stamp(),p.id));}catch{await chargeFailed(p,'Não foi possível cancelar a cobrança anterior, de outro valor.');return {error:'Não foi possível cancelar a cobrança anterior, de outro valor.'};}
+    return {replaced:true};
+   }
+   if(p.charged_cents<p.charge&&c.amount_cents===due)await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));
+   return chargeView(c,{already:true});
+  }
+  if(due<=0){if(!p.paid)await db.transaction(()=>run('UPDATE projects SET paid=1 WHERE id=?',p.id));return {skipped:'pago'};}
+  if(p.charged_cents>=p.charge)return {skipped:'já marcado'};
+  if(!billing.automatic||due<cfg.minCharge){
+   const small=billing.automatic,why=small?` O valor é menor que o mínimo para gerar PIX automático (${money(cfg.minCharge)}).`:'';
+   await db.transaction(async()=>{await run('UPDATE print_slots SET charged_cents=?,charge_error=NULL,updated=? WHERE project_id=?',p.charge,stamp(),p.id);
+    await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" tem ${money(due)} a pagar.${why} Pague na retirada, em dinheiro ou PIX para a Emersol. Detalhes: ${link(p.id)}`);
+    if(small)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" tem ${money(due)} a receber, abaixo do mínimo de ${money(cfg.minCharge)} para PIX automático. Receba na retirada e use "Registrar pagamento" no pedido: ${link(p.id)}`);});
+   return {error:small?`O valor é menor que o mínimo para gerar PIX automático (${money(cfg.minCharge)}).`:'A cobrança automática está desligada. Receba na retirada.'};
+  }
+  const who=await actor();if(!who){await chargeFailed(p,'A família não tem responsável principal.');return {error:'A família não tem responsável principal.'};}
+  if(!Number(g.billing_enabled)){await chargeFailed(p,'A cobrança automática está desativada para esta família.');return {error:'A cobrança automática está desativada para esta família.'};}
+  const previous=await db.withRequest(()=>one("SELECT method,installments,amount_cents,status FROM billing_contracts WHERE project_id=? ORDER BY created DESC LIMIT 1",p.id));
+  const keepCard=previous?.status==='cancelled'&&previous.method==='card_installments'&&Number(previous.amount_cents)!==due;
+  const method=keepCard?'card_installments':'pix_cash',installments=keepCard?Math.min(12,Math.max(1,Number(previous.installments)||1)):undefined;
+  let created;
+  try{created=await billing.create({familyId:p.family_id,projectId:p.id,purpose:'project',method,installments,requestKey:`agenda:${p.id}:${state.count+1}`,customer:{name:g.name,email:g.email,document:g.document,phone:g.whatsapp||''}},who);}
+  catch(e){const message=e.uncertain?'A resposta do Asaas não foi confirmada. Confira a tela Cobranças antes de tentar de novo.':`O Asaas recusou: ${String(e.message||'motivo não informado').slice(0,300)}`;await chargeFailed(p,message);return {error:message};}
+  await db.transaction(async()=>{await run('UPDATE print_slots SET charged_cents=?,charge_error=NULL,updated=? WHERE project_id=?',p.charge,stamp(),p.id);await event(p.id,chargeHistory({cents:created.amountCents,method:created.method,installments:created.installments,whatsapp:created.whatsapp}));});
+  return chargeView(created,{whatsapp:created.whatsapp});
+ }
+ async function retryCharge(u,id){if(!canOperate(u)&&!isAdmin(u))fail('Acesso operacional necessário.',403);const {p}=await own(id,u),got=await received(id);if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');if(p.paid||p.charge<=got)fail('Este pedido não tem valor em aberto.');await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',got,stamp(),id);const fresh=await one('SELECT p.*,s.charged_cents,s.validated_at FROM projects p JOIN print_slots s ON s.project_id=p.id WHERE p.id=?',id),result=await issueOne(fresh,await settings());if(result?.error)return {issued:false,error:result.error,amountCents:Number(p.charge)||0,method:'pix_cash',installments:1,checkoutUrl:null,whatsapp:false,status:'needs_review'};if(result?.replaced)return {issued:false,error:'A cobrança anterior, de outro valor, foi cancelada. Emita de novo para gerar o link atualizado.'};if(!result?.issued)return {issued:false,error:'Não foi possível emitir a cobrança agora.'};return result;}
  async function route(req,res,path,method,u){
   if(!path.startsWith('/api/schedule'))return false;
   const url=new URL(req.url,'http://localhost');
@@ -369,44 +404,11 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  }
  // ---- background work: charges, overruns and pickup reminders. Runs outside any request transaction. ----
  async function primary(fid){return db.withRequest(async()=>(await one("SELECT u.id,u.name,u.email,c.whatsapp,a.document,a.billing_enabled FROM family_automation a JOIN users u ON u.id=a.primary_guardian_id AND u.family_id=a.family_id LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE a.family_id=?",fid))||(await one("SELECT u.id,u.name,u.email,c.whatsapp,'' document,1 billing_enabled FROM users u LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE u.family_id=? AND u.role IN ('guardian','admin') ORDER BY u.id LIMIT 1",fid))||null);}
- async function chargeFailed(p,message){await db.transaction(()=>run('UPDATE print_slots SET charge_error=?,updated=? WHERE project_id=?',message,stamp(),p.id));await db.transaction(()=>tellTeam(`Clube Maker 3D: não consegui emitir a cobrança do pedido ${number(p.id)} "${p.name}" (${money(p.charge)}). ${message} Resolva e use "Emitir cobrança" no pedido: ${link(p.id)}`));}
+ async function chargeFailed(p,message){await db.transaction(async()=>{await run('UPDATE print_slots SET charge_error=?,updated=? WHERE project_id=?',message,stamp(),p.id);await event(p.id,`Cobrança não emitida: ${message}`);});await db.transaction(()=>tellTeam(`Clube Maker 3D: não consegui emitir a cobrança do pedido ${number(p.id)} "${p.name}" (${money(p.charge)}). ${message} Resolva e use "Emitir cobrança" no pedido: ${link(p.id)}`));}
  async function charges(){
   const cfg=await db.withRequest(()=>settings());
-  const rows=await db.withRequest(()=>all("SELECT p.*,s.charged_cents,s.validated_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.charge>0 AND p.exempt=0 AND s.charge_error IS NULL AND p.status IN ('queued','printing','ready','completed') ORDER BY p.id"));
-  for(const p of rows){try{
-   if(['queued','printing'].includes(p.status)&&cfg.chargeWhen!=='approval'&&!(cfg.chargeWhen==='validation'&&p.validated_at))continue;
-   const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND (status IN ('creating','pending','needs_review') OR "+outstandingInstallments+")",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)})),due=p.charge-state.got;
-   let g=null;const actor=async()=>{g=g||await primary(p.family_id);return g?{id:g.id,name:g.name,email:g.email,role:'guardian',family_id:p.family_id}:null;};
-   if(state.pending){
-    const c=state.pending;
-    if(c.status==='pending'&&c.amount_cents!==due&&(c.request_key.startsWith('agenda:')||c.request_key.startsWith('order:'))){
-     // The cost changed after the PIX was issued: the old charge is cancelled and a new one follows.
-     const who=await actor();if(!who)continue;
-     try{await billing.cancel(c.id,who);await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',state.got,stamp(),p.id));}catch{await chargeFailed(p,'Não foi possível cancelar a cobrança anterior, de outro valor.');}
-    }else if(p.charged_cents<p.charge&&c.amount_cents===due)await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));
-    continue;
-   }
-   if(due<=0){if(!p.paid)await db.transaction(()=>run('UPDATE projects SET paid=1 WHERE id=?',p.id));continue;}
-   if(p.charged_cents>=p.charge)continue;
-   if(!billing.automatic||due<cfg.minCharge){
-    // No link when the gateway is off or the amount is below what it accepts: the family pays at pickup
-    // (cash or the club's PIX) and the team registers it with "Registrar pagamento" on the order.
-    const small=billing.automatic,why=small?` O valor é menor que o mínimo para gerar PIX automático (${money(cfg.minCharge)}).`:'';
-    await db.transaction(async()=>{await run('UPDATE print_slots SET charged_cents=?,charge_error=NULL,updated=? WHERE project_id=?',p.charge,stamp(),p.id);
-     await tellFamily(p.family_id,`Olá, {nome}! O pedido ${number(p.id)} "${p.name}" tem ${money(due)} a pagar.${why} Pague na retirada, em dinheiro ou PIX para a Emersol. Detalhes: ${link(p.id)}`);
-     if(small)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" tem ${money(due)} a receber, abaixo do mínimo de ${money(cfg.minCharge)} para PIX automático. Receba na retirada e use "Registrar pagamento" no pedido: ${link(p.id)}`);});continue;
-   }
-   const who=await actor();if(!who){await chargeFailed(p,'A família não tem responsável principal.');continue;}
-   if(!Number(g.billing_enabled)){await chargeFailed(p,'A cobrança automática está desativada para esta família.');continue;}
-   // The first automatic charge stays PIX. A card link the team already issued is reissued as card when the amount changes.
-   const previous=await db.withRequest(()=>one("SELECT method,installments,amount_cents,status FROM billing_contracts WHERE project_id=? ORDER BY created DESC LIMIT 1",p.id));
-   const keepCard=previous?.status==='cancelled'&&previous.method==='card_installments'&&Number(previous.amount_cents)!==due;
-   const method=keepCard?'card_installments':'pix_cash',installments=keepCard?Math.min(12,Math.max(1,Number(previous.installments)||1)):undefined;
-   try{await billing.create({familyId:p.family_id,projectId:p.id,purpose:'project',method,installments,requestKey:`agenda:${p.id}:${state.count+1}`,customer:{name:g.name,email:g.email,document:g.document,phone:g.whatsapp||''}},who);}
-   // The gateway's own reason (already stripped of secrets) tells the team what to fix; an unconfirmed answer is never retried blindly.
-   catch(e){await chargeFailed(p,e.uncertain?'A resposta do Asaas não foi confirmada. Confira a tela Cobranças antes de tentar de novo.':`O Asaas recusou: ${String(e.message||'motivo não informado').slice(0,300)}`);continue;}
-   await db.transaction(()=>run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',p.charge,stamp(),p.id));
-  }catch{console.error('Falha ao processar cobrança da agenda.');}}
+  const rows=await db.withRequest(()=>all("SELECT p.*,s.charged_cents,s.validated_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.charge>0 AND p.exempt=0 AND s.charge_error IS NULL AND p.status IN ('queued','printing','ready','picked','completed') ORDER BY p.id"));
+  for(const p of rows){try{await issueOne(p,cfg);}catch{console.error('Falha ao processar cobrança da agenda.');}}
  }
  async function overruns(){
   const s=await db.withRequest(()=>one("SELECT s.project_id,s.ends_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.status='printing'"));
@@ -423,6 +425,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const c=await db.withRequest(()=>one('SELECT b.*,f.name family_name,p.name project_name FROM billing_contracts b JOIN families f ON f.id=b.family_id LEFT JOIN projects p ON p.id=b.project_id WHERE b.id=?',e.externalReference));if(!c)return;
   const what=c.project_id?`do pedido ${number(c.project_id)} "${c.project_name}"`:(c.plan==='annual'?'da anuidade':'da mensalidade');
   await db.transaction(async()=>{
+   if(c.project_id){await event(c.project_id,chargeHistory({cents:e.amountCents,method:c.method,installments:c.installments,paid:true}));const fresh=await one('SELECT * FROM projects WHERE id=?',c.project_id);if(fresh?.status==='picked'&&(Number(fresh.paid)||Number(fresh.exempt))){await run("UPDATE projects SET status='completed',updated=? WHERE id=?",stamp(),fresh.id);await event(fresh.id,'Pagamento recebido. Pedido concluído.');}}
    await tellFamily(c.family_id,`Olá, {nome}! Recebemos o pagamento ${what}: ${money(e.amountCents)}. Obrigado! 💚\nEquipe Clube Maker 3D`);
    await tellTeam(`Clube Maker 3D: pagamento recebido de ${c.family_name}, ${what}: ${money(e.amountCents)}. Baixa e lançamento no caixa feitos automaticamente.`);
   });

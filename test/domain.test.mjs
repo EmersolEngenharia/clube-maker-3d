@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {period,allocation,settle,balance,pricedQuote,hoursLine,chargeWithBonus,quoteCostParts,financiallySettled,monthlyUsage,parseExtraItems,extraItemsText} from '../domain.mjs';
+import {period,allocation,settle,balance,pricedQuote,hoursLine,chargeWithBonus,quoteCostParts,financiallySettled,monthlyUsage,parseExtraItems,extraItemsText,chargeHistory,openBillLabel} from '../domain.mjs';
 test('períodos usam Brasília, inclusive na virada do mês',()=>{assert.equal(period(new Date('2026-11-01T02:59:59Z')),'2026-10');assert.equal(period(new Date('2026-11-01T03:00:00Z')),'2026-11');});
 test('franquia não fica negativa e excedente é proporcional',()=>{assert.deepEqual(allocation(125,100,600),{included:100,extra:25,extraCost:250});assert.deepEqual(allocation(60,-10,600),{included:0,extra:60,extraCost:600});});
 test('consumo real menor reduz horas e material; excedentes nunca aumentam cobrança',()=>{const p={minutes:120,included:90,grams:100,extra_rate:600,material_rate:12000};assert.deepEqual(settle(p,80,50),{used:80,charge:600});assert.deepEqual(settle(p,200,200),{used:90,charge:1500});assert.deepEqual(settle(p,100,100),{used:90,charge:1300});});
@@ -54,4 +54,18 @@ test('bonificação abate horas a cobrar e o valor, sem deixar o total negativo'
  assert.deepEqual(parseExtraItems([{description:' Argola ',quantity:14,unit_cents:35}]),[{description:'Argola',quantity:14,unitCents:35}]);
  const parts=quoteCostParts({minutes:60,included:0,extra_rate:600,bonus_cents:2000,charge:gifted.total,extra_items:ring});
  assert.deepEqual(parts,{hours:0,material:0,items:290,gifted:0});
+ assert.match(chargeHistory({cents:2620,method:'pix_cash',whatsapp:true}),/Cobrança de R\$\s*26,20 emitida via PIX e enviada no WhatsApp/);
+ assert.match(chargeHistory({cents:2620,method:'pix_cash',whatsapp:false}),/O WhatsApp não foi enviado/);
+ assert.match(chargeHistory({cents:2620,method:'card_installments',installments:3}),/Link de pagamento no cartão \(até 3x\) de R\$\s*26,20 gerado/);
+ assert.match(chargeHistory({cents:2620,method:'card_installments',installments:3,paid:true}),/Pagamento de R\$\s*26,20 recebido via cartão/);
+ assert.equal(openBillLabel({bill_method:'pix_cash',bill_installments:1}),'PIX emitido · aguardando');
+ assert.equal(openBillLabel({bill_open:1}),'PIX emitido · aguardando');
+ assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:1}),'Cartão emitido · aguardando');
+ assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:3}),'Cartão emitido · aguardando · até 3×');
+ assert.equal(openBillLabel({bill_method:'card_recurring'}),'Cartão emitido · aguardando');
+ assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:1,bill_status:'pending'}),'Cartão emitido · aguardando');
+ assert.equal(openBillLabel({bill_method:'card_installments',bill_installments:3,bill_status:'needs_review'}),'Cartão em conferência');
+ assert.equal(openBillLabel({bill_method:'pix_cash',bill_status:'needs_review'}),'PIX em conferência');
+ assert.equal(openBillLabel({bill_status:'needs_review'}),'Cobrança em conferência');
+ assert.equal(openBillLabel({bill_method:'pix_cash',bill_status:'creating'}),'Emissão em andamento');
 });

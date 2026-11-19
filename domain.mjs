@@ -1,7 +1,7 @@
-export const statuses = ['draft','review','question','approval','queued','printing','ready','completed','cancelled','failed'];
+export const statuses = ['draft','review','question','approval','queued','printing','ready','picked','completed','cancelled','failed'];
 export const reserved = ['queued','printing'];
-// `ready` is the visible stage "À retirar": printed, waiting for the family to pick it up.
-export const consumed = ['ready','completed'];
+// `ready` is "À retirar". `picked` is already collected and still waiting for payment.
+export const consumed = ['ready','picked','completed'];
 // Concluído needs a settled balance. Charge 0 is not enough: staff marks Isento / Bonificado.
 export function financiallySettled(project){
   if(Boolean(Number(project?.paid)) || Boolean(Number(project?.exempt))) return true;
@@ -15,11 +15,22 @@ export function ordersInScope(projects, filter){
   if(filter==='all') return projects;
   return projects.filter(p=>p.status!=='completed'&&p.status!=='cancelled');
 }
+// Pending charges say they were issued. needs_review and creating have no checkout yet, so they must not.
+export function openBillLabel(project){
+  const method=project?.bill_method;
+  const installments=Number(project?.bill_installments)||1;
+  const card=method==='card_installments'||method==='card_recurring';
+  const status=project?.bill_status;
+  if(status==='needs_review') return card?'Cartão em conferência':method?'PIX em conferência':'Cobrança em conferência';
+  if(status==='creating') return 'Emissão em andamento';
+  if(card) return installments>1?`Cartão emitido · aguardando · até ${installments}×`:'Cartão emitido · aguardando';
+  return 'PIX emitido · aguardando';
+}
 export function financeKey(project){
   if(Number(project?.paid)) return 'paid';
   if(Number(project?.exempt)) return 'exempt';
   if(project?.bill_open) return 'open';
-  if(project?.status==='ready'||project?.status==='completed') return Number(project.charge)>0?'due':'none';
+  if(project?.status==='ready'||project?.status==='picked'||project?.status==='completed') return Number(project.charge)>0?'due':'none';
   return '';
 }
 export function period(date = new Date()) {
@@ -62,6 +73,15 @@ export function parseExtraItems(input) {
     if (typeof unitCents !== 'number' || !Number.isInteger(unitCents) || unitCents < 0 || unitCents > 1000000) throw new Error(`Item ${n}: o preço unitário é um inteiro de 0 a 1000000 centavos.`);
     return {description, quantity, unitCents};
   });
+}
+// One sentence for the order history and the confirmation after a charge is issued or paid.
+export function chargeHistory({cents, method, installments=1, whatsapp=false, paid=false}) {
+  const value = (Number(cents) / 100).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'});
+  const card = method === 'card_installments' || method === 'card_recurring';
+  const times = card && Number(installments) > 1 ? ` (até ${Number(installments)}x)` : '';
+  if (paid) return `Pagamento de ${value} recebido via ${card ? 'cartão' : 'PIX'}.`;
+  if (card) return `Link de pagamento no cartão${times} de ${value} gerado${whatsapp ? ' e enviado no WhatsApp' : ''}.`;
+  return `Cobrança de ${value} emitida via PIX${whatsapp ? ' e enviada no WhatsApp' : '. O WhatsApp não foi enviado'}.`;
 }
 export function extraItemsText(value) {
   const money = cents => (cents / 100).toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'});
