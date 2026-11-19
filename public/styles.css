@@ -43,6 +43,7 @@
 @media(max-width:600px){.ov-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .badge.pa-fin.paid{background:#e7f2e6;color:#3e7042}.badge.pa-fin.open{background:#e7edf8;color:#4a6c9d}.badge.pa-fin.due{background:#fff0d3;color:#91611f}.badge.pa-fin.exempt{background:#efe8f6;color:#5c4a78}.badge.pa-fin.none{background:#edf1e6;color:#64736b}.collect-lock{display:inline-flex;flex-direction:column;align-items:flex-start;gap:4px;max-width:280px}.collect-note{color:var(--muted);font-size:12px;line-height:1.4}button.is-locked:disabled{cursor:not-allowed}
+.quote-proposal{margin:0 0 4px}.quote-proposal span{display:block;font-size:12px;font-weight:650;color:var(--muted)}.card .quote-proposal p{margin:4px 0 0;color:var(--ink);font-size:15px;font-weight:650;line-height:1.45}.hours-line{margin:10px 0 0;font-size:14px;font-weight:700;color:var(--green)}
 
 .pa-head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:10px}.pa-head h1{margin:0;font-size:1.5rem}.pa-head .filters{margin:0}
 .pa-tools{margin:6px 0!important;gap:8px!important}.pa-tools select,.pa-tools input{min-height:38px;padding:7px 10px}

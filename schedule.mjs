@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {isTeam,isAdmin,canOperate} from './permissions.mjs';
-import {period,allocation} from './domain.mjs';
+import {period,allocation,pricedQuote,chargeWithBonus} from './domain.mjs';
 import {analyzePrintFile} from './slicer.mjs';
 import {whatsappNumber} from './messaging/evolution.mjs';
 
@@ -116,10 +116,10 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  }
  // Reserves the family's free minutes for a project in 'approval' and puts it in the queue.
  async function reserveNow(p){
-  const b=await quota.balance(p.family_id),a=allocation(p.minutes,b.available,p.extra_rate),total=a.extraCost+Math.round(p.grams*p.material_rate/1000);
-  await quota.reserve(p.id,p.family_id,a.included);
-  await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",a.included,period(),stamp(),total,stamp(),p.id);
-  return {included:a.included,total};
+  const b=await quota.balance(p.family_id),q=pricedQuote({minutes:p.minutes,grams:p.grams,available:b.available,extraRate:p.extra_rate,materialRate:p.material_rate,bonusMinutes:p.bonus_minutes,bonusCents:p.bonus_cents});
+  await quota.reserve(p.id,p.family_id,q.included);
+  await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),stamp(),q.total,stamp(),p.id);
+  return {included:q.included,total:q.total};
  }
  // New numbers for a project that already holds minutes (queued or printing): the reservation is redone.
  async function requote(p,minutes,grams,rate,material){
@@ -128,7 +128,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    await run('DELETE FROM benefit_allocations WHERE project_id=?',p.id);await run('UPDATE projects SET included=0 WHERE id=?',p.id);
    included=Math.min(minutes,(await quota.balance(p.family_id)).available);await quota.reserve(p.id,p.family_id,included);
   }else{let room=included;for(const a of await all('SELECT * FROM benefit_allocations WHERE project_id=? ORDER BY code',p.id)){const m=Math.min(a.minutes,room);room-=m;if(!m)await run('DELETE FROM benefit_allocations WHERE project_id=? AND code=?',p.id,a.code);else if(m!==a.minutes)await run('UPDATE benefit_allocations SET minutes=? WHERE project_id=? AND code=?',m,p.id,a.code);}}
-  const charge=Math.round((minutes-included)*p.extra_rate/60)+Math.round(grams*rate/1000);
+  const charge=chargeWithBonus({extraMinutes:Math.max(0,minutes-included),extraRate:p.extra_rate,materialCost:Math.round(grams*rate/1000),bonusMinutes:p.bonus_minutes,bonusCents:p.bonus_cents}).total;
   await run('UPDATE projects SET minutes=?,grams=?,material_rate=?,material=?,included=?,charge=?,updated=? WHERE id=?',minutes,grams,rate,material,included,charge,stamp(),p.id);
   return {included,charge};
  }
@@ -139,10 +139,11 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  const link=id=>`${origin}/?pedido=${id}`;
  // Says what the amount is made of: hours beyond the family allowance and/or filament.
  const costLine=p=>{
-  if(!(p.charge>0))return 'Cabe na cota da família, sem valor adicional previsto.';
+  const gifted=Number(p.bonus_minutes)>0||Number(p.bonus_cents)>0;
+  if(!(p.charge>0))return gifted?'Sem valor adicional: a equipe bonificou este orçamento.':'Cabe na cota da família, sem valor adicional previsto.';
   const extra=Math.max(0,(p.minutes||0)-(p.included||0)),hours=Math.min(p.charge,Math.round(extra*(p.extra_rate||0)/60)),material=p.charge-hours;
   const parts=[hours>0?`${money(hours)} de horas além da cota`:'',material>0?`${money(material)} de filamento`:''].filter(Boolean);
-  return `Valor previsto: ${money(p.charge)}${p.minutes===undefined?'':hours>0?` (${parts.join(' + ')})`:` (filamento; as horas cabem na cota)`}.`;
+  return `Valor previsto: ${money(p.charge)}${p.minutes===undefined?'':hours>0?` (${parts.join(' + ')})`:` (filamento; as horas cabem na cota)`}.${gifted?' Inclui bonificação da equipe.':''}`;
  };
  async function applyReflow(by=null){
   const cfg=await settings(),list=await intervals(),fixed=list.filter(i=>i.block||i.status==='printing'),queued=list.filter(i=>i.id&&i.status!=='printing'),moved=reflow(cfg,fixed,queued);
@@ -179,7 +180,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  // Avisa o responsável de que há um orçamento esperando: valor, uso da cota e o link para aprovar.
  async function onQuoted(p,u,q){
   const hours=m=>`${Number((m/60).toFixed(1)).toLocaleString('pt-BR')} h`;
-  await tellFamily(p.family_id,`Olá, {nome}! O orçamento do pedido ${number(p.id)} "${p.name}" está pronto. Tempo estimado: ${span(p.minutes)}${q.included?`, usando ${hours(q.included)} da cota do mês`:''}. ${costLine({...p,charge:q.total,included:q.included})} Ao aprovar${q.total>0?', o PIX é gerado e':''} o pedido entra na fila de impressão. Confira e aprove: ${link(p.id)}`,u?.id);
+  await tellFamily(p.family_id,`Olá, {nome}! O orçamento do pedido ${number(p.id)} "${p.name}" está pronto. Tempo estimado: ${span(p.minutes)} (${p.minutes} min, ${p.grams} g de ${p.material}). ${q.hoursLine}. ${costLine({...p,charge:q.total,included:q.included})} Proposta: ${p.quote_note}\nAo aprovar${q.total>0?', o PIX é gerado e':''} o pedido entra na fila de impressão. Confira e aprove: ${link(p.id)}`,u?.id);
  }
  async function beforeStart(p){
   const s=await slotOf(p.id);if(!s)return;
