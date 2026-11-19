@@ -1,7 +1,7 @@
 import {randomBytes,createHash} from 'node:crypto';
 import {isAdmin,isTeam,canFinance,canOperate} from './permissions.mjs';
 import {localDate,monthEnd,expiry} from './quota.mjs';
-import {period} from './domain.mjs';
+import {period,splitCents,addMonths,installmentSourceKey} from './domain.mjs';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const now=()=>new Date().toISOString();
 export function createOperations({db,quota,fail,str,integer,body,json,creds,password,login,onHours=async()=>{}}){
@@ -57,6 +57,13 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
  }
  async function addEntry({scope='club',familyId=null,kind,category,description,cents,entryDate=localDate(),sourceKey=null,createdBy=null,key=null}){
   return Number((await run('INSERT INTO cash_entries(scope,family_id,kind,category,description,cents,entry_date,source_key,created_by,created,request_key) VALUES(?,?,?,?,?,?,?,?,?,?,?)',scope,familyId,kind,category,description,cents,entryDate,sourceKey,createdBy,now(),key)).lastInsertRowid);
+ }
+ function installmentCount(v){if(v===undefined||v===null||v==='')return 1;const n=typeof v==='string'&&/^\d+$/.test(v)?Number(v):v;return integer(n,'Parcelas',1,24);}
+ async function stockBundle(e){
+  const tagged=/^installment:stock:(\d+):(\d+)$/.exec(e.source_key||''),anchor=tagged?Number(tagged[1]):e.id;
+  const lot=await one('SELECT * FROM stock_lots WHERE entry_id=?',anchor);if(!lot)return null;
+  const entries=await all("SELECT * FROM cash_entries WHERE id=? OR source_key LIKE ? ORDER BY entry_date,id",lot.entry_id,'installment:stock:'+lot.entry_id+':%');
+  return {lot,entries};
  }
  async function backfill(){
   // Preserve old received amounts, with the original registration date.
@@ -206,24 +213,29 @@ export function createOperations({db,quota,fail,str,integer,body,json,creds,pass
   if(voidEntry&&method==='POST'){
    const e=await one('SELECT * FROM cash_entries WHERE id=?',Number(voidEntry[1]));if(!e)fail('Lançamento não encontrado.',404);
    if(e.scope==='club')need(canFinance(u));else need(u.family_id===e.family_id&&(u.role==='guardian'||u.role==='admin'||(u.role==='learner'&&e.created_by===u.id)));
-   if(e.voided_at)fail('Este lançamento já foi estornado.');
+   const bundle=await stockBundle(e),pending=(bundle?bundle.entries:[e]).filter(r=>!r.voided_at);
+   if(!pending.length)fail('Este lançamento já foi estornado.');
    const receipt=await one('SELECT * FROM billing_receipts WHERE entry_id=?',e.id);if(receipt?.gateway==='asaas')fail('Estorne o pagamento no painel do Asaas. O webhook atualizará o financeiro e a vigência.',409);
-   const stock=await one('SELECT s.id FROM stock_lots s WHERE s.entry_id=?',e.id);if(stock&&await one('SELECT id FROM stock_uses WHERE lot_id=?',stock.id))fail('Este filamento já teve baixa. Registre um ajuste financeiro separado para preservar o estoque.');
-   const b=await body(req);await run('UPDATE cash_entries SET voided_at=?,void_reason=? WHERE id=?',now(),str(b.reason,'Motivo do estorno',200),e.id);
-   if(e.source_key?.startsWith('project:')){await run('UPDATE projects SET paid=0 WHERE id=?',parseInt(e.source_key.slice(8),10));await run('UPDATE cash_entries SET source_key=? WHERE id=?',e.source_key+':void:'+e.id,e.id);}
+   if(bundle?.lot&&await one('SELECT id FROM stock_uses WHERE lot_id=?',bundle.lot.id))fail('Este filamento já teve baixa. Registre um ajuste financeiro separado para preservar o estoque.');
+   const b=await body(req),reason=str(b.reason,'Motivo do estorno',200),stamp=now();
+   for(const row of pending)await run('UPDATE cash_entries SET voided_at=?,void_reason=? WHERE id=?',stamp,reason,row.id);
+   if(!bundle&&e.source_key?.startsWith('project:')){await run('UPDATE projects SET paid=0 WHERE id=?',parseInt(e.source_key.slice(8),10));await run('UPDATE cash_entries SET source_key=? WHERE id=?',e.source_key+':void:'+e.id,e.id);}
    if(receipt){await run("UPDATE billing_receipts SET status='refunded',updated=? WHERE entry_id=?",now(),e.id);const paid=await one("SELECT MAX(entitlement_end) ending FROM billing_receipts WHERE contract_id=? AND status='paid'",receipt.contract_id);await run("UPDATE billing_contracts SET status=CASE WHEN status='cancelled' THEN status ELSE ? END,current_period_end=?,updated=? WHERE id=?",paid?.ending?'active':'refunded',paid?.ending||null,now(),receipt.contract_id);}
    await audit(u,'finance.entry.void',e.id);json(res,{ok:true});return true;
   }
   if(path==='/api/stock'&&method==='GET'){
-   need(canFinance(u)||canOperate(u));const lots=await all("SELECT s.*,c.cents,c.entry_date,COALESCE((SELECT SUM(grams) FROM stock_uses x WHERE x.lot_id=s.id),0) used_grams FROM stock_lots s JOIN cash_entries c ON c.id=s.entry_id WHERE c.voided_at IS NULL ORDER BY c.entry_date,s.id");
-   const visible=lots.map(l=>{const remaining=l.grams-Number(l.used_grams),{cents,...rest}=l;return {...rest,remaining,...(canFinance(u)?{cents,costPerKg:Math.round(cents*1000/l.grams),remainingValue:Math.round(cents*remaining/l.grams)}:{})};});
+   need(canFinance(u)||canOperate(u));const lots=await all("SELECT s.*,c.entry_date,COALESCE((SELECT SUM(grams) FROM stock_uses x WHERE x.lot_id=s.id),0) used_grams,CASE WHEN c.source_key LIKE 'installment:stock:%' THEN (SELECT COUNT(*) FROM cash_entries i WHERE i.voided_at IS NULL AND i.source_key LIKE 'installment:stock:' || s.entry_id || ':%') ELSE 1 END installments FROM stock_lots s JOIN cash_entries c ON c.id=s.entry_id WHERE c.voided_at IS NULL ORDER BY c.entry_date,s.id");
+   const visible=lots.map(l=>{const remaining=l.grams-Number(l.used_grams),cost=Number(l.cost_cents),{cost_cents,cents,...rest}=l;return {...rest,installments:Number(l.installments)||1,remaining,...(canFinance(u)?{cents:cost,costPerKg:Math.round(cost*1000/l.grams),remainingValue:Math.round(cost*remaining/l.grams)}:{})};});
    json(res,{lots:visible,uses:await all('SELECT x.*,u.name author FROM stock_uses x JOIN users u ON u.id=x.created_by ORDER BY x.id DESC LIMIT 100'),canBuy:canFinance(u),totals:{grams:visible.reduce((n,l)=>n+l.remaining,0),...(canFinance(u)?{value:visible.reduce((n,l)=>n+l.remainingValue,0)}:{})}});return true;
   }
   if(path==='/api/stock/purchases'&&method==='POST'){
    need(canFinance(u));const b=await body(req),key=requestKey(b);if(await one('SELECT id FROM cash_entries WHERE request_key=?',key)){json(res,{ok:true,duplicate:true});return true;}
-   const material=str(b.material,'Material',60),color=str(b.color,'Cor',60),grams=integer(b.grams,'Peso em gramas',1,1000000),supplier=b.supplier?str(b.supplier,'Fornecedor',100):'',entryDate=date(b.entryDate);if(entryDate>localDate())fail('Informe uma compra já realizada.');
-   const entryId=await addEntry({kind:'expense',category:'filament',description:`Filamento ${material} · ${color} · ${grams} g${supplier?' · '+supplier:''}`,cents:integer(b.cents,'Valor pago',0,100000000),entryDate,createdBy:u.id,key});
-   const id=Number((await run('INSERT INTO stock_lots(entry_id,material,color,supplier,grams) VALUES(?,?,?,?,?)',entryId,material,color,supplier,grams)).lastInsertRowid);await audit(u,'stock.purchase',id);json(res,{id,entryId});return true;
+   const material=str(b.material,'Material',60),color=str(b.color,'Cor',60),grams=integer(b.grams,'Peso em gramas',1,1000000),supplier=b.supplier?str(b.supplier,'Fornecedor',100):'',n=installmentCount(b.installments),entryDate=date(b.entryDate,'Data');
+   if(n===1&&entryDate>localDate())fail('Informe uma compra já realizada.');
+   const cents=integer(b.cents,'Valor pago',0,100000000),parts=splitCents(cents,n),base=`Filamento ${material} · ${color} · ${grams} g${supplier?' · '+supplier:''}`,ids=[];
+   for(let k=1;k<=n;k++)ids.push(await addEntry({kind:'expense',category:'filament',description:n>1?`${base} (parcela ${k}/${n})`:base,cents:parts[k-1],entryDate:addMonths(entryDate,k-1),createdBy:u.id,key:k===1?key:null}));
+   if(n>1)for(let k=1;k<=n;k++)await run('UPDATE cash_entries SET source_key=? WHERE id=?',installmentSourceKey(ids[0],k),ids[k-1]);
+   const id=Number((await run('INSERT INTO stock_lots(entry_id,material,color,supplier,grams,cost_cents) VALUES(?,?,?,?,?,?)',ids[0],material,color,supplier,grams,cents)).lastInsertRowid);await audit(u,'stock.purchase',id);json(res,{id,entryId:ids[0],installments:n,entryIds:ids});return true;
   }
   if(path==='/api/stock/use'&&method==='POST'){
    need(canFinance(u)||canOperate(u));const b=await body(req),key=requestKey(b);if(await one('SELECT id FROM stock_uses WHERE request_key=?',key)){json(res,{ok:true,duplicate:true});return true;}

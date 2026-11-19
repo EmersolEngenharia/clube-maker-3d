@@ -7,7 +7,7 @@ COPY --chown=node:node db ./db
 COPY --chown=node:node payments ./payments
 COPY --chown=node:node messaging ./messaging
 COPY --chown=node:node public ./public
-COPY --chown=node:node scripts/bootstrap-admin.mjs scripts/provision-database.mjs scripts/check-asaas-env.mjs ./scripts/
+COPY --chown=node:node scripts/bootstrap-admin.mjs scripts/provision-database.mjs scripts/check-asaas-env.mjs scripts/parcelar-compras.mjs ./scripts/
 USER node
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
 EXPOSE 3000
