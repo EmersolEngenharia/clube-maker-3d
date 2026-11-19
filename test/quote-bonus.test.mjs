@@ -15,7 +15,7 @@ function grab(source,name){
  for(;end<source.length;end++){if(source[end]==='{')depth++;else if(source[end]==='}'&&--depth===0){end++;break;}}
  return source.slice(start,end);
 }
-const ui=new Function(grab(app,'hoursLineText')+'\n'+grab(app,'quoteView')+'\nreturn {quoteView};')();
+const ui=new Function(grab(app,'readExtraItems')+'\n'+grab(app,'extraItemsCost')+'\n'+grab(app,'hoursLineText')+'\n'+grab(app,'quoteView')+'\nreturn {quoteView};')();
 
 test('a proposta e a bonificação aparecem no pedido e na aprovação',()=>{
  assert.match(app,/Proposta à família/);
