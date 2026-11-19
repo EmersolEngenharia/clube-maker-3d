@@ -9,7 +9,7 @@
 // Idempotente: se a entrada já é installment:stock:<id>:1 e as seis linhas somam o cost_cents, não faz nada.
 // Se a conversão parou no meio, completa as parcelas que faltam usando o cost_cents (não divide de novo).
 //
-// Não rode no deploy. Primeiro aplique supabase/migrations/20261119230000_maker3d_stock_lot_cost.sql.
+// Não rode no deploy. Primeiro aplique supabase/migrations/20261120000000_maker3d_stock_lot_cost.sql.
 // Conferir sem gravar:
 //   node scripts/parcelar-compras.mjs
 // Gravar, só com o banco já migrado:

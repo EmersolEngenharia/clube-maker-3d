@@ -48,7 +48,7 @@ test('migration preenche cost_cents pelo caixa e não reescreve depois',async()=
   await db.exec('ALTER TABLE maker3d.stock_lots DROP COLUMN cost_cents');
   const entry=await db.query("INSERT INTO maker3d.cash_entries(scope,kind,category,description,cents,entry_date,created) VALUES ('club','expense','filament','Filamento',9000,'2026-11-01','2026-11-01') RETURNING id");
   await db.query("INSERT INTO maker3d.stock_lots(entry_id,material,color,grams) VALUES ($1,'PLA','Azul',1000)",[entry.rows[0].id]);
-  const sql=readFileSync(new URL('../supabase/migrations/20261119230000_maker3d_stock_lot_cost.sql',import.meta.url),'utf8');
+  const sql=readFileSync(new URL('../supabase/migrations/20261120000000_maker3d_stock_lot_cost.sql',import.meta.url),'utf8');
   await db.exec(sql);
   assert.equal((await db.query('SELECT cost_cents FROM maker3d.stock_lots')).rows[0].cost_cents,9000);
   await db.query('UPDATE maker3d.cash_entries SET cents=1500');
