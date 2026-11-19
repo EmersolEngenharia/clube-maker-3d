@@ -65,6 +65,9 @@ test('concluído exige pago ou isento; o financeiro distingue isento de sem valo
 test('a tela nomeia À retirar, isento e a visão Não concluídos',()=>{
  assert.match(app,/ready:'À retirar'/);
  assert.match(app,/picked:'Retirado · aguardando pagamento'/);
+ assert.match(app,/\['ready','picked','completed'\]\.includes\(p\.status\)\?'Consumo final':'Orçamento do projeto'/);
+ assert.match(app,/\['ready','picked','completed'\]\.includes\(p\.status\)\?'Valor final adicional':'Máximo adicional'/);
+ assert.match(app,/\['ready','picked','completed'\]\.includes\(p\.status\)\?`<div><span>Consumo real registrado<\/span>/);
  assert.match(app,/pagamento ainda está em aberto/);
  assert.match(ops,/Retirado · aguardando pagamento/);
  assert.match(app,/filter:'open'/);
