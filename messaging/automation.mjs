@@ -5,6 +5,13 @@ import {EvolutionClient,whatsappNumber,payerDocument} from './evolution.mjs';
 import {familyReport,previousMonth} from './reports.mjs';
 import {checkoutURL} from '../payments/provider.mjs';
 const money=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n/100);
+// The sentence that accompanies the Asaas link. PIX stays the wording of today's automatic charges.
+export function paymentPhrase(method,installments){
+ const times=method==='card_installments'&&Number(installments)>1?` em ${installments}x sem juros`:'';
+ if(method==='card_installments'||method==='card_recurring')return `Pague no cartão${times} com segurança pelo Asaas`;
+ if(typeof method==='string'&&method.startsWith('pix'))return 'Pague por PIX com segurança pelo Asaas';
+ return 'Pague com segurança pelo Asaas';
+}
 export function createAutomation({db,billing,asaas,env=process.env,evolution,clock=()=>new Date(),fail=(m,s=400)=>{throw Object.assign(new Error(m),{status:s});}}){
  const client=evolution||new EvolutionClient({url:env.EVOLUTION_URL,key:env.EVOLUTION_API_KEY,instance:env.EVOLUTION_INSTANCE});
  const enabled=()=>env.WHATSAPP_AUTOMATION_ENABLED==='true'&&client.configured;
@@ -74,8 +81,9 @@ export function createAutomation({db,billing,asaas,env=process.env,evolution,clo
  const c=await db.withRequest(()=>db.one('SELECT * FROM billing_contracts WHERE id=?',job.contract_id));if(!c||['cancelled','refunded'].includes(c.status))return {cancel:true};
  const p=await asaas.call('/payments/'+encodeURIComponent(job.charge_id));if(p.externalReference!==c.id||!['PENDING','OVERDUE'].includes(p.status))return {cancel:true};const url=checkoutURL(p.invoiceUrl);if(!url)return {skip:'Link de pagamento ainda indisponível.'};
  const label=job.kind==='overdue'?'Lembrete: sua cobrança venceu ontem. Se já pagou, aguarde a confirmação.':'Seu link de pagamento está disponível.';
- if(project){const m=project.actual_minutes??project.minutes,h=Math.floor(m/60);return {number:g.whatsapp,text:`Olá, ${g.name}! ${label}\nImpressão #${String(project.id).padStart(3,'0')} "${project.name}" no Clube Maker 3D: ${money(c.amount_cents)}.\n${h?h+' h ':''}${m%60} min de impressão · ${project.actual_grams??project.grams} g de ${project.material}.\nVencimento: ${p.dueDate.split('-').reverse().join('/')}.\nPague por PIX com segurança pelo Asaas: ${url}\nAssim que o pagamento cair, a baixa é automática.\nEquipe Financeiro`};}
- return {number:g.whatsapp,text:`Olá, ${g.name}! ${label}\n${c.plan==='monthly'?'Mensalidade':'Plano anual'} do Clube Maker 3D: ${money(c.amount_cents)}${c.method==='card_installments'?` em ${c.installments}x sem juros`:''}.\nVencimento: ${p.dueDate.split('-').reverse().join('/')}.\nPague com segurança pelo Asaas: ${url}\nEquipe Financeiro`};
+ const phrase=paymentPhrase(c.method,c.installments);
+ if(project){const m=project.actual_minutes??project.minutes,h=Math.floor(m/60);return {number:g.whatsapp,text:`Olá, ${g.name}! ${label}\nImpressão #${String(project.id).padStart(3,'0')} "${project.name}" no Clube Maker 3D: ${money(c.amount_cents)}.\n${h?h+' h ':''}${m%60} min de impressão · ${project.actual_grams??project.grams} g de ${project.material}.\nVencimento: ${p.dueDate.split('-').reverse().join('/')}.\n${phrase}: ${url}\nAssim que o pagamento cair, a baixa é automática.\nEquipe Financeiro`};}
+ return {number:g.whatsapp,text:`Olá, ${g.name}! ${label}\n${c.plan==='monthly'?'Mensalidade':'Plano anual'} do Clube Maker 3D: ${money(c.amount_cents)}.\nVencimento: ${p.dueDate.split('-').reverse().join('/')}.\n${phrase}: ${url}\nEquipe Financeiro`};
  }
  async function tick(){if(running||!enabled())return;running=true;try{
   await db.transaction(async()=>{await seed();await db.run("UPDATE whatsapp_outbox SET status='needs_review',last_error='Envio interrompido. Confira na Evolution antes de reenviar.',updated=? WHERE status='sending' AND updated<?",stamp(),new Date(clock().getTime()-300000).toISOString());});

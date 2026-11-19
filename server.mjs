@@ -8,7 +8,7 @@ import {createAutomation} from './messaging/automation.mjs';
 import {createBroadcasts,mediaType} from './messaging/broadcasts.mjs';
 import {EvolutionClient} from './messaging/evolution.mjs';
 import {AsaasProvider} from './payments/asaas.mjs';
-import {createBilling} from './payments/billing.mjs';
+import {createBilling,outstandingInstallments} from './payments/billing.mjs';
 import {createOperations} from './operations.mjs';
 import { createDatabase } from './db.mjs';
 import { createFileStorage } from './storage.mjs';
@@ -53,6 +53,8 @@ async function body(req){if(req.parsedBody!==undefined)return req.parsedBody;con
 async function user(req){const token=readCookie(req,'maker_session');return token?(await one("SELECT u.id,u.email,u.name,u.role,u.family_id,t.user_id is_staff,(SELECT access_role FROM team_permissions WHERE user_id=u.id AND t.user_id IS NOT NULL) team_role,(SELECT whatsapp FROM guardian_contacts WHERE user_id=u.id) whatsapp,COALESCE(p.theme,'atelier') theme,COALESCE(p.avatar,'robot') avatar,COALESCE(p.experience,'guided') experience,CASE WHEN p.photo_key IS NOT NULL THEN 1 ELSE 0 END has_photo FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE s.token=? AND s.expires>?",hash(token),Date.now())):null;}
 function authorized(u,roles){if(!u)fail('Entre na sua conta para continuar.',401);if(roles&&!roles.includes(u.role)&&!(roles.includes('admin')&&isAdmin(u)))fail('Esta ação é exclusiva do responsável autorizado.',403);}
 async function project(id,u){authorized(u);const p=(await one('SELECT * FROM projects WHERE id=?',id));if(!p)fail('Projeto não encontrado.',404);if(!isTeam(u)&&p.family_id!==u.family_id)fail('Projeto não encontrado.',404);return p;}
+function openPayment(row,u){if(!row)return null;const payment={method:row.method,installments:Number(row.installments)||1,amountCents:Number(row.amount_cents),status:row.status,checkoutUrl:row.checkout_url||null};if(isTeam(u)&&row.error_note)payment.error=row.error_note;return payment;}
+async function orderPayer(familyId){const primary=await one("SELECT u.name,u.email,c.whatsapp,a.document FROM family_automation a JOIN users u ON u.id=a.primary_guardian_id AND u.family_id=a.family_id AND u.role IN ('guardian','admin') LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE a.family_id=?",familyId);const g=primary||await one("SELECT u.name,u.email,c.whatsapp,'' AS document FROM users u LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE u.family_id=? AND u.role IN ('guardian','admin') ORDER BY u.id LIMIT 1",familyId);if(!g)fail('A família não tem responsável para emitir a cobrança.',409);return g;}
 const quota=createQuota(db);
 const familyBalance=id=>quota.balance(id);
 async function quote(p){const bal=await familyBalance(p.family_id),q=pricedQuote({minutes:p.minutes,grams:p.grams,available:bal.available,extraRate:p.extra_rate,materialRate:p.material_rate,bonusMinutes:p.bonus_minutes,bonusCents:p.bonus_cents});return {...q,balance:bal.available,balanceAfter:bal.available-q.included,hoursLine:hoursLine(q)};}
@@ -279,7 +281,7 @@ async function handle(req,res){
     }
     const match=path.match(/^\/api\/projects\/(\d+)(?:\/(\w+))?$/);
     if(match){const id=Number(match[1]),action=match[2],p=(await project(id,u));
-      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]},model:{sql:'SELECT site,url,model_id,profile_id,title,author,license,license_checked_at,(SELECT name FROM users WHERE id=license_checked_by) license_checked_name,CASE WHEN image_key IS NULL THEN 0 ELSE 1 END has_image FROM model_links WHERE project_id=?',params:[id]}});const m=d.model[0];return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d,model:m?{...m,license_level:licenseLevel(m.license)}:null,gallery:(await gallery.projectItem(id))||null,slot:await schedule.projectSlot(id,u)});}
+      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]},openCharge:{sql:"SELECT method,installments,amount_cents,status,checkout_url,error_note FROM billing_contracts WHERE project_id=? AND (status IN ('creating','pending','needs_review','past_due') OR "+outstandingInstallments+") ORDER BY created DESC LIMIT 1",params:[id]},model:{sql:'SELECT site,url,model_id,profile_id,title,author,license,license_checked_at,(SELECT name FROM users WHERE id=license_checked_by) license_checked_name,CASE WHEN image_key IS NULL THEN 0 ELSE 1 END has_image FROM model_links WHERE project_id=?',params:[id]}});const m=d.model[0],chargeRow=d.openCharge[0];delete d.openCharge;return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d,model:m?{...m,license_level:licenseLevel(m.license)}:null,gallery:(await gallery.projectItem(id))||null,slot:await schedule.projectSlot(id,u),payment:openPayment(chargeRow,u)});}
       if(method!=='POST')fail('Ação não encontrada.',404);
       const b=await body(req);
       if(!canOperate(u)&&!(u.family_id&&u.family_id===p.family_id)&&['edit','submit','file','message'].includes(action))fail('Acesso operacional necessário.',403);
@@ -351,6 +353,19 @@ async function handle(req,res){
       else if(action==='collect'){authorized(u,canOperate(u)?null:['guardian']);if(!canOperate(u)&&p.family_id!==u.family_id)fail('Ação exclusiva da sua família.',403);await collectProject(p);}
       else if(action==='exempt'){await exemptProject(p,u);}
       else if(action==='paid'){authorized(u,canFinance(u)?null:['admin']);if(!['ready','completed'].includes(p.status))fail('Registre o pagamento após a conclusão da impressão.');await operations.recordProject(p,u);(await run('UPDATE projects SET paid=1 WHERE id=?',id));(await event(id,'Pagamento do projeto registrado pela equipe.'));await schedule.onManualPaid(p,u);}
+      else if(action==='charge'){
+        if(!canFinance(u)&&!canOperate(u))fail('Ação exclusiva da equipe.',403);
+        if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');
+        if(!['queued','printing','ready','completed'].includes(p.status))fail('Este pedido ainda não tem valor para cobrar.');
+        const payMethod=b.method==null||b.method===''?'pix_cash':b.method;
+        if(payMethod!=='pix_cash'&&payMethod!=='card_installments')fail('Para o pedido, escolha PIX ou cartão.');
+        const installments=payMethod==='card_installments'?integer(b.installments??1,'Parcelas',1,12):undefined;
+        const g=await orderPayer(p.family_id),count=Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',id)).n);
+        const created=await billing.create({familyId:p.family_id,projectId:id,purpose:'project',method:payMethod,installments,requestKey:`order:${id}:${count+1}`,customer:{name:g.name,email:g.email,document:g.document||'',phone:g.whatsapp||''}},u);
+        await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',p.charge,now(),id);
+        await event(id,`Cobrança de ${brMoney(created.amountCents)} gerada ${payMethod==='card_installments'?`no cartão${installments>1?` em ${installments}× sem juros`:''}`:'por PIX'}.`);
+        return json(res,created);
+      }
       else fail('Ação não encontrada.',404);
       return json(res,{ok:true});
     }

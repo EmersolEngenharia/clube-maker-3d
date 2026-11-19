@@ -146,6 +146,12 @@ preservadas. Cancelar cobrança avulsa em aberto chama DELETE /payments/<id>.
 conferência; a base não afirma cancelamento que o gateway não confirmou.
 O sistema impede usar outro ambiente para cancelar/consultar uma cobrança antiga.
 
+## Link de cartão no pedido
+
+A cobrança automática do pedido (horas extras e filamento, e a diferença quando o valor muda) continua em PIX. Na tela do pedido, a equipe escolhe a forma ao gerar o link: PIX, que é o padrão, ou cartão. O cartão é uma cobrança Asaas com `billingType` CREDIT_CARD; a família paga no `invoiceUrl`, sem digitar cartão no portal. O mesmo vale para a impressão avulsa e para a mensalidade/anuidade na tela Cobranças, que já ofereciam cartão. Parcelas de 1 a 12, padrão 1×; em 1× o portal não envia `installmentCount`. O webhook `PAYMENT_CONFIRMED` e `PAYMENT_RECEIVED` dá baixa do cartão como no PIX, com o mesmo recibo e a mesma idempotência.
+
+Na conta Asaas da Emersol, o recebimento por cartão de crédito precisa estar habilitado. Sem isso, a API recusa a cobrança CREDIT_CARD. Parcelamento sem juros, se a equipe usar mais de 1×, também precisa estar permitido nessa conta. O portal não envia número de cartão e não grava a chave da API.
+
 ## Pontos de implementação em relação ao briefing
 
 - Amanhã é calculado no fuso America/Sao_Paulo, corrigindo o exemplo UTC do texto.
