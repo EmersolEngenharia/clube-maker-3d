@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Manual do pedido — Clube Maker 3D</title>
+<style>
+@font-face{font-family:Inter;font-weight:400;src:url(../assets/fonts/Inter-Regular.otf)}
+@font-face{font-family:Inter;font-weight:500;src:url(../assets/fonts/Inter-Medium.otf)}
+@font-face{font-family:Inter;font-weight:700;src:url(../assets/fonts/Inter-Bold.otf)}
+@font-face{font-family:Inter;font-weight:800;src:url(../assets/fonts/Inter-ExtraBold.otf)}
+@font-face{font-family:Inter;font-weight:900;src:url(../assets/fonts/Inter-Black.otf)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#000;overflow:hidden}
+#stage{position:relative;overflow:hidden;font-family:Inter,sans-serif;color:#402e46;background:#fff8f4}
+#stage>*{position:absolute;left:0;top:0;will-change:transform,opacity}
+.abs{position:absolute;left:0;top:0;transform-origin:50% 50%}
+img{display:block;user-select:none}
+.t{white-space:nowrap;font-weight:900;letter-spacing:-.03em;line-height:1}
+.mask{overflow:hidden}
+</style></head><body>
+<div id="stage"></div>
+<script src="timing.js"></script>
+<script>
+/* ---------- parâmetros ---------- */
+const Q=new URLSearchParams(location.search),FMT=Q.get('fmt')||'h';
+const W=FMT==='v'?1080:1920,H=FMT==='v'?1920:1080,V=FMT==='v';
+const stage=document.getElementById('stage');stage.style.width=W+'px';stage.style.height=H+'px';
+const U=Math.min(W,H)/1080; // unidade tipográfica
+const C={cream:'#fff8f4',ink:'#402e46',red:'#a63c30',navy:'#162846',tur:'#13c4d0',sun:'#ffcf54',flame:'#ff6328',soft:'#fff0e7',muted:'#786578',border:'#efded7'};
+const A='../assets/';
+/* ---------- utilitários de tempo ---------- */
+const cl=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const pr=(t,a,b)=>cl((t-a)/(b-a));
+const E={out:x=>1-Math.pow(1-x,3),out5:x=>1-Math.pow(1-x,5),io:x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2,
+ back:x=>{const c=1.9,d=c+1;return 1+d*Math.pow(x-1,3)+c*Math.pow(x-1,2)},
+ spring:x=>x>=1?1:1-Math.exp(-7*x)*Math.cos(x*13),lin:x=>x};
+const mix=(a,b,k)=>a+(b-a)*k;
+function hexA(h){return[1,3,5].map(i=>parseInt(h.slice(i,i+2),16))}
+function mixC(a,b,k){const x=hexA(a),y=hexA(b);return'rgb('+x.map((v,i)=>Math.round(mix(v,y[i],k))).join(',')+')'}
+/* ---------- fábrica de elementos ---------- */
+const reg=[];
+function mk(tag,{cls='',css={},html='',src=null,parent=stage}={}){const e=document.createElement(tag);e.className='abs '+cls;Object.assign(e.style,css);if(src)e.src=src;if(html)e.innerHTML=html;parent.appendChild(e);return e}
+function put(e,{x=0,y=0,s=1,sx=null,sy=null,r=0,o=1,ox=0,oy=0}){e.style.opacity=o;e.style.display=o<=0.001?'none':'block';e.style.transform=`translate(${x}px,${y}px) translate(${-50+ox}%,${-50+oy}%) rotate(${r}deg) scale(${sx??s},${sy??s})`}
+function text(str,{size=100,color=C.ink,weight=900,ls=-.03,align='center',css={}}={}){return mk('div',{cls:'t',html:str,css:{fontSize:size*U+'px',color,fontWeight:weight,letterSpacing:ls+'em',textAlign:align,...css}})}
+function img(src,w,css={}){const e=mk('img',{src,css:{width:w+'px',height:'auto',...css}});return e}
+/* ---------- fundo ---------- */
+const bg=mk('div',{css:{width:W+'px',height:H+'px',left:0,top:0,transform:'none'}});
+const dots=mk('div',{css:{width:W+'px',height:H+'px',transform:'none',backgroundImage:'radial-gradient(circle,#a63c3016 2px,transparent 2.5px)',backgroundSize:(44*U)+'px '+(44*U)+'px'}});
+/* ---------- recorte real: cria <img> a partir de um cutout ---------- */
+const CUT=n=>A+'cutouts/'+n+'.png';
+const cutW={card:760,choice:222,steps:760,title:446.8};
+const CX=W/2,CY=H/2;
+/* ================= ELEMENTOS ================= */
+const rocket=img(A+'brand/brand-icon.svg',300*U);
+const lockup=img(A+'brand/logo-lockup@3x.png',560*U);
+/* B1 */
+const w1=text('IMAGINE.',{size:V?190:270,color:C.tur}),w2=text('CRIE.',{size:V?190:270,color:C.sun}),w3=text('IMPRIMA.',{size:V?190:270,color:C.flame});
+const wipe=mk('div',{css:{width:W*1.6+'px',height:H*2+'px',background:C.red,transform:'none'}});
+const wipe2=mk('div',{css:{width:W*1.6+'px',height:H*2+'px',background:C.sun,transform:'none'}});
+/* B2 */
+const t2a=text('Como fazer',{size:V?150:190,color:C.ink}),t2b=text('um pedido',{size:V?150:190,color:C.red}),t2c=text('em 4 passos.',{size:V?92:110,color:C.ink,weight:800});
+const stepsImg=img(CUT('s1-steps'),(V?940:1220)),stepsHi=mk('div',{css:{height:(V?66:80)+'px',borderRadius:'60px',background:'#a63c3022',border:'3px solid '+C.red}});
+/* utilidades de card */
+function cardImg(name,w){return img(CUT(name),w,{borderRadius:(18*w/760)+'px',boxShadow:'0 30px 80px #402e4633,0 4px 14px #402e4622',background:'#fff'})}
+function chip(str,col,fg='#fff',size=44){return mk('div',{cls:'t',html:str,css:{fontSize:size*U+'px',fontWeight:800,letterSpacing:'-.01em',color:fg,background:col,padding:(.34*size*U)+'px '+(.7*size*U)+'px',borderRadius:'999px',boxShadow:'0 10px 30px #402e4633'}})}
+function badge(n,label){const d=mk('div',{cls:'t',css:{display:'flex',alignItems:'center',gap:20*U+'px'}});d.innerHTML=`<span style="display:flex;align-items:center;justify-content:center;width:${96*U}px;height:${96*U}px;border-radius:50%;background:${C.red};color:#fff;font-size:${56*U}px;font-weight:900;box-shadow:0 0 0 ${10*U}px #a63c3022">${n}</span><span style="font-size:${64*U}px;font-weight:900;letter-spacing:-.03em;color:${C.ink}">${label}</span>`;return d}
+/* B3 – passo 1 */
+const b3=badge(1,'Como começar'),s1Card=cardImg('s1-card',(V?940:1000));
+const chW=V?300:420;
+const chOff={},chOn={},chTag={},chCap={};
+const KINDS=[['idea','IDEIA',C.tur,'#0d3b40','Só tem a ideia?<br>A equipe ajuda a descobrir como fazer.'],
+ ['file','ARQUIVO 3D',C.flame,'#fff','Já tem o modelo pronto?<br>Envie em STL ou 3MF.'],
+ ['link','LINK DA INTERNET',C.sun,C.navy,'Achou uma peça no<br>MakerWorld, Printables ou Thingiverse?<br>Cole o link.']];
+KINDS.forEach(([k,lab,col,fg,cap])=>{chOff[k]=cardImg('choice-'+k+'-off',chW);chOn[k]=cardImg('choice-'+k+'-on',chW);chTag[k]=chip(lab,col,fg,V?40:38);chCap[k]=text(cap,{size:V?50:50,color:C.ink,weight:800,ls:-.02,css:{lineHeight:1.15}})});
+/* B4 – continuar */
+const btnC=img(CUT('btn-continuar'),V?520:520,{borderRadius:'18px',boxShadow:'0 24px 60px #a63c3055'});
+const cursor=mk('div',{html:'<svg width="72" height="72" viewBox="0 0 24 24"><path d="M5 2l14 9-6 1.5L16 20l-3 1-3-7.5L5 17z" fill="#402e46" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>'});
+const ripple=mk('div',{css:{width:'160px',height:'160px',borderRadius:'50%',border:'8px solid '+C.red}});
+const t4=text('E clique em',{size:V?100:120,color:C.ink});
+/* B5 – passo 2 */
+const b5=badge(2,'Conte sobre a peça');
+const c2={};['idea','file','link'].forEach(k=>{c2[k]={e:cardImg('s2-'+k+'-empty-card',V?960:860),f:cardImg('s2-'+k+'-card',V?960:860)}});
+const cap2={idea:['TENHO UMA IDEIA',C.tur,'#0d3b40','Dê um nome, conte o que imaginou<br>e, se quiser, anexe um desenho.'],
+ file:['ARQUIVO 3D',C.flame,'#fff','Dê um nome e envie o arquivo<br>STL ou 3MF (até 25 MB).'],
+ link:['LINK DA INTERNET',C.sun,C.navy,'Cole o link da peça e toque em<br>“Buscar dados da peça”.']};
+const c2tag={},c2cap={};for(const k in cap2){c2tag[k]=chip(cap2[k][0],cap2[k][1],cap2[k][2],V?40:38);c2cap[k]=text(cap2[k][3],{size:V?50:46,weight:800,ls:-.02,css:{lineHeight:1.15}})}
+/* B6 – passo 3 */
+const b6=badge(3,'Detalhes da peça'),s3Card=cardImg('s3-card',V?940:1040);
+const q6=[['Tamanho',C.tur,'#0d3b40'],['Cor',C.flame,'#fff'],['Quantidade',C.sun,C.navy]].map(([s,c,f])=>chip(s,c,f,V?44:42));
+const help6=text('Não sabe?<br>Escolha <span style="color:#a63c30">“Quero ajuda”.</span>',{size:V?64:50,weight:800,ls:-.02,css:{lineHeight:1.12}});
+/* B7 – passo 4 */
+const b7=badge(4,'Revisar e enviar'),s4Card=cardImg('s4-card',V?940:940);
+const nohi=mk('div',{css:{border:'6px solid '+C.red,borderRadius:'22px',background:'#a63c3014'}});
+const sendHi=mk('div',{css:{border:'6px solid '+C.red,borderRadius:'22px',background:'#a63c3018'}});
+const t7a=text('Sem cobrança<br>ao enviar.',{size:V?110:92,color:C.ink,css:{lineHeight:1.02}});
+const t7b=text('Só o responsável<br>aprova os custos.',{size:V?58:50,weight:800,ls:-.02,color:C.red,css:{lineHeight:1.1}});
+const conf=[];for(let i=0;i<46;i++){const cols=[C.tur,C.sun,C.flame,C.red,C.navy];conf.push({e:mk('div',{css:{width:(14+(i%4)*7)*U+'px',height:(14+(i%3)*8)*U+'px',background:cols[i%5],borderRadius:(i%2?'50%':'4px')}}),a:(i/46)*Math.PI*2+i*.37,v:(380+((i*97)%520))*U,r:(i*53)%360})}
+/* B8 – final */
+const flow=[['Equipe avalia','a ideia',C.tur,'#0d3b40'],['Orçamento','na tela',C.sun,C.navy],['Você aprova','e entra na fila',C.flame,'#fff'],['Sua peça','é impressa!',C.red,'#fff']].map(([a,b,c,f])=>{const d=mk('div',{cls:'t',css:{background:c,color:f,borderRadius:28*U+'px',padding:(26*U)+'px '+(40*U)+'px',textAlign:'center',boxShadow:'0 18px 50px #162846 55'.replace(' 55','55')}});d.innerHTML=`<div style="font-size:${(V?60:50)*U}px;font-weight:900;letter-spacing:-.02em">${a}</div><div style="font-size:${(V?40:34)*U}px;font-weight:700;margin-top:6px;opacity:.85">${b}</div>`;return d});
+const arrows=[0,1,2].map(()=>mk('div',{html:'<svg width="70" height="40" viewBox="0 0 70 40"><path d="M2 20H60M44 5l16 15-16 15" stroke="#ffcf54" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'}));
+const logoCard=mk('div',{css:{background:'#fff',borderRadius:40*U+'px',padding:(36*U)+'px '+(56*U)+'px',boxShadow:'0 30px 90px #00000055'}});
+const logoImg=img(A+'brand/logo-lockup@3x.png',(V?760:820)*U,{});logoCard.appendChild(logoImg);logoImg.style.position='static';logoImg.style.transform='none';
+const urlTxt=text('maker3d.emersol.ai',{size:V?92:104,color:'#fff'});
+const slog=text('<span>Imagine.</span> <span>Crie.</span> <span>Imprima.</span>',{size:V?64:62,color:C.sun,weight:800,ls:-.02});
+const tFinal=text('Seu pedido em<br>4 passos simples.',{size:V?120:124,color:'#fff',css:{lineHeight:1.02}});
+/* linha de progresso (cola em todas as cenas de passo) */
+const prog=mk('div',{css:{height:(10*U)+'px',background:C.red,borderRadius:'8px',transformOrigin:'0 50%'}});
+const progBg=mk('div',{css:{height:(10*U)+'px',background:'#a63c3026',borderRadius:'8px',width:(W-2*60*U)+'px'}});
+/* ================= TIMELINE ================= */
+const BEATS={hook:0,title:2.6,p1:5.0,cont:11.6,p2:13.4,p3:19.6,p4:23.0,end:26.6,dur:30};
+function seekAnim(t){
+ // reset: oculta tudo
+ for(const e of stage.children){if(e!==bg&&e!==dots)e.style.display='none'}
+ /* fundo */
+ let bgc=C.cream;
+ if(t<BEATS.title+.6)bgc=mixC(C.navy,C.cream,E.io(pr(t,BEATS.title,BEATS.title+.6)));
+ if(t>=BEATS.end)bgc=mixC(C.cream,C.navy,E.io(pr(t,BEATS.end,BEATS.end+.5)));
+ bg.style.background=bgc;bg.style.display='block';
+ dots.style.opacity=t<BEATS.title?0:(t>=BEATS.end?0:.9);dots.style.display='block';dots.style.transform=`translate(${-t*14}px,${-t*8}px)`;
+
+ /* ---------- B1 HOOK 0–2.6 ---------- */
+ if(t<2.9){
+  const k=t;
+  const ws=[[w1,.15],[w2,.8],[w3,1.4]];
+  const ys=V?[-330,-60,230]:[-250,0,250];
+  ws.forEach(([w,s],i)=>{const p=E.back(pr(k,s,s+.35)),out=E.io(pr(k,2.1,2.5));
+   put(w,{x:CX+mix(-W*.7,0,p)+mix(0,-W,out),y:CY+ys[i],s:mix(.6,1,p),r:mix(-8,i===1?3:-2,p),o:pr(k,s,s+.08)*(1-pr(k,2.4,2.55))})});
+  const rp=E.io(pr(k,1.5,2.35));
+  put(rocket,{x:mix(-300,W+300,rp),y:mix(H*.9,H*.12,rp),s:1.5,r:38+rp*8,o:k>1.5&&k<2.4?1:0});
+  put(wipe,{x:mix(-W*1.7,CX,E.io(pr(k,2.2,2.6))),y:CY,o:k>2.2?1:0}); // cobre
+ }
+ /* ---------- B2 TÍTULO 2.6–5.0 ---------- */
+ if(t>=2.3&&t<5.4){
+  const k=t-BEATS.title;
+  const out=E.io(pr(t,4.75,5.15));
+  const wp=E.io(pr(t,2.35,2.95));
+  put(wipe,{x:mix(CX,W*2.3,wp),y:CY,o:t<3.1?1:0});
+  put(lockup,{x:V?CX:CX,y:V?H*.12:H*.12-out*200,s:mix(.7,1,E.out(pr(k,.2,.7))),o:pr(k,.2,.45)*(1-out)});
+  const base=V?H*.30:H*.34;
+  put(t2a,{x:CX-out*W,y:base,s:mix(.7,1,E.back(pr(k,.35,.8))),o:pr(k,.35,.5)*(1-out)});
+  put(t2b,{x:CX+out*W,y:base+(V?170:200),s:mix(.7,1,E.back(pr(k,.5,.95))),o:pr(k,.5,.65)*(1-out)});
+  put(t2c,{x:CX,y:base+(V?330:390),s:mix(.8,1,E.out(pr(k,.9,1.3))),o:pr(k,.9,1.2)*(1-out)});
+  const sy=V?H*.66:H*.80,sp=E.out5(pr(k,1.1,1.7));
+  put(stepsImg,{x:CX,y:sy+(1-sp)*120-out*300,o:sp*(1-out)});
+  // destaque percorre as 4 etapas
+  const sw=(V?940:1220);
+  const idx=cl(Math.floor(pr(k,1.4,2.2)*4),0,3),L=[-.015,.285,.585,.885],WD=[.17,.17,.17,.15];
+  put(stepsHi,{x:CX+(L[idx]+WD[idx]/2-.5)*sw,y:sy+(1-sp)*120-out*300,o:pr(k,1.4,1.5)*(1-out)*sp});
+  stepsHi.style.width=WD[idx]*sw+'px';
+ }
+ /* ---------- progresso ---------- */
+ const steps=[[BEATS.p1,BEATS.cont,1],[BEATS.cont,BEATS.p2,1],[BEATS.p2,BEATS.p3,2],[BEATS.p3,BEATS.p4,3],[BEATS.p4,BEATS.end,4]];
+ if(t>=BEATS.p1-.1&&t<BEATS.end+.2){
+  const n=t<BEATS.p2?1:t<BEATS.p3?2:t<BEATS.p4?3:4;
+  const fill=mix((n-1)/4,n/4,E.io(pr(t,[BEATS.p1,BEATS.p2,BEATS.p3,BEATS.p4][n-1],[BEATS.p1,BEATS.p2,BEATS.p3,BEATS.p4][n-1]+.7)));
+  put(progBg,{x:CX,y:V?H-70:H-44,o:pr(t,BEATS.p1,BEATS.p1+.4)*(1-pr(t,BEATS.end-.2,BEATS.end+.2))});
+  prog.style.width=(W-120*U)*fill+'px';
+  put(prog,{x:60*U,y:V?H-70:H-44,ox:50,o:pr(t,BEATS.p1,BEATS.p1+.4)*(1-pr(t,BEATS.end-.2,BEATS.end+.2))});
+  prog.style.transform=`translate(${60*U}px,${(V?H-70:H-44)}px) translate(0,-50%)`;
+ }
+ /* ---------- B3 PASSO 1 (5.0–11.6) + B4 clique (11.6–13.4) ---------- */
+ if(t>=4.9&&t<BEATS.p2+.2){
+  const k=t-BEATS.p1;
+  const hdrY=V?H*.1:H*.115,hdrIn=E.out5(pr(k,.05,.55)),hdrOut=pr(t,BEATS.cont-.1,BEATS.cont+.3);
+  const hdrOff=hdrOut;
+  // wipe de entrada (sol)
+  put(wipe2,{x:mix(CX,W*2.3,E.io(pr(t,4.95,5.45))),y:CY,o:t<5.5?1:0});
+  put(b3,{x:CX,y:hdrY-(1-hdrIn)*80,o:hdrIn*(1-hdrOut)});
+  // cartão inteiro (real) 5.0–6.3, depois "abre" nos 3 recortes
+  const cp=E.out5(pr(k,.2,.8)),split=E.io(pr(k,1.1,1.6));
+  const cardW=V?940:1000;
+  put(s1Card,{x:CX,y:CY+(V?-40:20)+(1-cp)*160,s:mix(.92,1,cp)*mix(1,.0,0),o:cp*(1-split)*(1-hdrOut)});
+  s1Card.style.transform=s1Card.style.transform; // noop
+  // posições dos 3 cartões (compatíveis com o layout real do cartão: x .033/.354/.675)
+  const rowY=V?H*.30:H*.40;
+  const cx0=V?[CX-chW-22,CX,CX+chW+22]:[CX-chW-50,CX,CX+chW+50];
+  const sc0=cardW/760;
+  const realX=[.033,.354,.675].map(f=>CX-cardW/2+(f+.146)*cardW);
+  const realY=CY+(V?-40:20)-(cardW/760*422)/2+.243*(cardW/760*422)+.236*(cardW/760*422)+.0;
+  const slot=[];
+  KINDS.forEach(([kd,lab],i)=>{
+   const st=1.1+i*.05;
+   const on=pr(k,1.6+.1+i*1.7,1.6+.1+i*1.7+.25)*(1-pr(k,1.6+i*1.7+1.7-.15,1.6+i*1.7+1.7+.1));
+   const act=cl(on*1,0,1);
+   const sp=E.back(pr(k,st,st+.5));
+   const lift=E.out(act)*-1;
+   const x=mix(realX[i],cx0[i],sp),y=mix(realY,rowY,sp);
+   const dimmed=(k>1.6)?1-.0:1;
+   const isDone=k>1.6+(i+1)*1.7-.15&&i<2;
+   const scale=mix(chW/chW*(cardW/760*1),1,0);
+   put(chOff[kd],{x,y:y+lift*22*U,s:mix(cardW/760*1,1,sp)*(1+.12*act),o:sp>0?(1-act)*(1-hdrOut):0,r:0});
+   put(chOn[kd],{x,y:y+lift*22*U,s:mix(cardW/760*1,1,sp)*(1+.12*act),o:(sp>0?act:0)*(1-hdrOut)});
+  });
+  // legendas por opção
+  KINDS.forEach(([kd],i)=>{
+   const s=1.6+i*1.7,a=pr(k,s+.05,s+.4),b=1-pr(k,s+1.55,s+1.7);
+   const o=a*b*(1-hdrOut);const ty=V?H*.56:H*.66;
+   put(chTag[kd],{x:CX,y:ty+(1-E.out(a))*50,o,s:mix(.8,1,E.back(a))});
+   put(chCap[kd],{x:CX,y:ty+(V?190:170)+(1-E.out(a))*60,o,s:1});
+  });
+  // B4: link selecionado, cursor → Continuar
+  if(t>=BEATS.cont-.3){
+   const kc=t-BEATS.cont;
+   // mantém o cartão de link ligado até o botão aparecer
+   const ent=E.out5(pr(kc,-.1,.45));
+   const bx=CX+(V?0:0),by=V?H*.62:H*.66;
+   put(t4,{x:CX,y:V?H*.40:H*.30,o:ent*(1-pr(t,BEATS.p2-.2,BEATS.p2+.1)),s:mix(.85,1,ent)});
+   put(btnC,{x:bx,y:by,s:mix(.7,1.25,ent)*(1+(pr(kc,1.05,1.12)-pr(kc,1.12,1.3))*-.06),o:ent*(1-pr(t,BEATS.p2-.2,BEATS.p2+.1))});
+   const cp2=E.io(pr(kc,.25,1.0));
+   put(cursor,{x:mix(bx+420,bx+90,cp2),y:mix(by+330,by+60,cp2),ox:-25,oy:-15,o:ent*(1-pr(t,BEATS.p2-.15,BEATS.p2+.1))});
+   const rp=pr(kc,1.05,1.5);
+   put(ripple,{x:bx+90,y:by+60,s:mix(.3,2.2,E.out(rp)),o:(1-rp)*(rp>0?1:0)*.9});
+  }
+  // wipe de saída vermelho p/ passo 2
+  put(wipe,{x:mix(-W*1.7,CX,E.io(pr(t,BEATS.p2-.35,BEATS.p2+.0))),y:CY,o:t>BEATS.p2-.35&&t<BEATS.p2+.5?1:0});
+ }
+ /* ---------- B5 PASSO 2 (13.4–19.6) ---------- */
+ if(t>=BEATS.p2-.05&&t<BEATS.p3+.4){
+  const k=t-BEATS.p2,seg=2.05;
+  const hIn=E.out5(pr(k,.35,.8));
+  put(wipe,{x:mix(CX,W*2.3,E.io(pr(t,BEATS.p2,BEATS.p2+.45))),y:CY,o:t<BEATS.p2+.5?1:0});
+  put(b5,{x:CX,y:V?H*.09:H*.105-(1-hIn)*60,o:hIn*(1-pr(t,BEATS.p3-.2,BEATS.p3+.1))});
+  ['idea','file','link'].forEach((kd,i)=>{
+   const s=.35+i*seg,a=E.out5(pr(k,s,s+.5)),b=E.io(pr(k,s+seg-.35,s+seg)),vis=a*(1-b);
+   const w=V?960:860,sc=1;
+   const cardH=(kd==='link'?655.7:636.7)/760*w;
+   const px=V?CX:W*.30,py=V?H*.46:H*.55;
+   const dx=mix(W*.9,0,a)+mix(0,-W*.9,b);
+   const fill=E.io(pr(k,s+.55,s+1.3));
+   const zm=1+.05*pr(k,s,s+seg);put(c2[kd].e,{x:px+dx,y:py,s:zm,o:vis>0?1:0,r:(1-a)*4-b*4});
+   // preenchido por cima, revelado da esquerda p/ direita
+   c2[kd].f.style.clipPath=`inset(0 ${(1-fill)*100}% 0 0 round 18px)`;
+   put(c2[kd].f,{x:px+dx,y:py,s:zm,o:vis>0?1:0,r:(1-a)*4-b*4});
+   const tx=V?CX:W*.745,ty=V?H*.80:H*.40;
+   put(c2tag[kd],{x:tx+mix(80,0,a)+mix(0,-80,b),y:ty,o:a*(1-b),s:mix(.85,1,E.back(a))});
+   put(c2cap[kd],{x:tx+mix(80,0,a)+mix(0,-80,b),y:ty+(V?150:150),o:pr(k,s+.12,s+.5)*(1-b)});
+  });
+ }
+ /* ---------- B6 PASSO 3 (19.6–23.0) ---------- */
+ if(t>=BEATS.p3-.05&&t<BEATS.p4+.4){
+  const k=t-BEATS.p3,out=pr(t,BEATS.p4-.25,BEATS.p4+.1);
+  put(wipe2,{x:mix(CX,W*2.3,E.io(pr(t,BEATS.p3,BEATS.p3+.45))),y:CY,o:t<BEATS.p3+.5?1:0});
+  const hIn=E.out5(pr(k,.3,.75));
+  put(b6,{x:CX,y:V?H*.09:H*.105-(1-hIn)*60,o:hIn*(1-out)});
+  const cp=E.out5(pr(k,.2,.9)),w=V?940:1040,h=472.5/760*w;
+  const px=V?CX:W*.34,py=V?H*.42:H*.54;
+  put(s3Card,{x:px,y:py+(1-cp)*140,s:mix(.9,1,cp)*mix(1,1.04,E.io(pr(k,1,3))),o:cp*(1-out),r:mix(-3,0,cp)});
+  // chips pipocam sobre o cartão real
+  const pos=V?[[CX-260,H*.60],[CX+250,H*.60],[CX,H*.69]]:[[W*.34-330,H*.84],[W*.34+60,H*.84],[W*.34+400,H*.84]];
+  q6.forEach((c,i)=>{const s=1.0+i*.35,a=E.back(pr(k,s,s+.4));
+   put(c,{x:V?[CX-250,CX+250,CX][i]:[W*.73,W*.73,W*.73][i],y:V?[H*.69,H*.69,H*.755][i]:[H*.33+i*0,H*.33,H*.33][i]+i*(V?0:130),o:pr(k,s,s+.1)*(1-out),s:mix(.5,1,a),r:(i-1)*3})});
+  put(help6,{x:V?CX:W*.765,y:V?H*.85:H*.76,o:pr(k,2.1,2.5)*(1-out),s:mix(.9,1,E.out(pr(k,2.1,2.6)))});
+ }
+ /* ---------- B7 PASSO 4 (23.0–26.6) ---------- */
+ if(t>=BEATS.p4-.05&&t<BEATS.end+.6){
+  const k=t-BEATS.p4,out=pr(t,BEATS.end-.1,BEATS.end+.3);
+  put(wipe,{x:mix(CX,W*2.3,E.io(pr(t,BEATS.p4,BEATS.p4+.45))),y:CY,o:t<BEATS.p4+.5?1:0});
+  const hIn=E.out5(pr(k,.3,.75));
+  put(b7,{x:CX,y:V?H*.09:H*.105-(1-hIn)*60,o:hIn*(1-out)});
+  const cp=E.out5(pr(k,.2,.9)),w=940,hh=572.9/760*w;
+  const px=V?CX:W*.30,py=V?H*.40:H*.53;
+  put(s4Card,{x:px,y:py+(1-cp)*140,s:mix(.92,1,cp),o:cp*(1-out)});
+  const left=px-w/2,top=py-hh/2;
+  // destaque "sem cobrança"
+  const n=cl(E.back(pr(k,1.0,1.45)),0,1.4),nb={x:.033,y:.655,w:.934,h:.136};
+  nohi.style.width=nb.w*w+16+'px';nohi.style.height=nb.h*hh+16+'px';
+  put(nohi,{x:left+(nb.x+nb.w/2)*w,y:top+(nb.y+nb.h/2)*hh,s:mix(1.08,1,pr(k,1,1.4)),o:pr(k,1.0,1.2)*(1-pr(k,1.9,2.1))*(1-out)});
+  // botão enviar + clique
+  const sb={x:.72,y:.874,w:.247,h:.082};
+  sendHi.style.width=sb.w*w+18+'px';sendHi.style.height=sb.h*hh+18+'px';
+  const bx=left+(sb.x+sb.w/2)*w,by=top+(sb.y+sb.h/2)*hh;
+  put(sendHi,{x:bx,y:by,o:pr(k,1.95,2.15)*(1-out)*(1-pr(k,2.5,2.6))});
+  const cp2=E.io(pr(k,1.8,2.45));
+  put(cursor,{x:mix(bx+280,bx+30,cp2),y:mix(by+260,by+20,cp2),ox:-25,oy:-15,o:pr(k,1.8,2.0)*(1-out)});
+  const rp=pr(k,2.5,2.95);
+  put(ripple,{x:bx+20,y:by+10,s:mix(.3,2.8,E.out(rp)),o:(1-rp)*(rp>0?1:0)});
+  // textos laterais
+  const tx=V?CX:W*.745;
+  put(t7a,{x:tx,y:V?H*.73:H*.38,o:pr(k,.9,1.3)*(1-pr(k,2.2,2.5))*(1-out),s:mix(.85,1,E.back(pr(k,.9,1.4)))});
+  put(t7b,{x:tx,y:V?H*.84:H*.56,o:pr(k,1.2,1.6)*(1-pr(k,2.2,2.5))*(1-out)});
+  const sendT=text; // (sem uso)
+  // confete
+  conf.forEach(c=>{const q=pr(k,2.55,3.5),d=c.v*E.out(q),g=520*U*q*q;put(c.e,{x:bx+Math.cos(c.a)*d,y:by+Math.sin(c.a)*d+g,r:c.r+q*540,o:q>0&&q<1?1-pr(q,.7,1):0})});
+  // check final
+ }
+ /* ---------- B8 FINAL (26.6–30) ---------- */
+ if(t>=BEATS.end-.1){
+  const k=t-BEATS.end;
+  // faixa de fluxo
+  const fy=V?H*.2:H*.22;
+  const fw=V?[0,0,0,0]:null;
+  const pos=V?[[CX,H*.14],[CX,H*.26],[CX,H*.38],[CX,H*.50]]:[[W*.14,H*.2],[W*.38,H*.2],[W*.62,H*.2],[W*.86,H*.2]];
+  const ap=V?[[CX,H*.20],[CX,H*.32],[CX,H*.44]]:[[W*.26,H*.2],[W*.50,H*.2],[W*.74,H*.2]];
+  const fo=pr(k,1.55,1.95);
+  flow.forEach((f,i)=>{const c0=TIMING.chip[i]-.05,a=E.back(pr(RT,c0,c0+.4));put(f,{x:pos[i][0],y:pos[i][1]-fo*(V?300:260),s:mix(.5,1,a),o:pr(RT,c0,c0+.1)*(1-fo)})});
+  arrows.forEach((a,i)=>{put(a,{x:ap[i][0],y:ap[i][1]-fo*(V?300:260),s:V?.8:1,r:V?90:0,o:pr(RT,TIMING.chip[i+1]-.3,TIMING.chip[i+1]-.05)*(1-fo)})});
+  // fechamento
+  const f=E.out5(pr(k,1.6,2.3)),lp=E.back(pr(k,1.85,2.4));
+  put(tFinal,{x:CX,y:V?H*.19:H*.19+0,o:0});
+  put(rocket,{x:V?CX:W*.5,y:V?H*.24:H*.2,s:(V?1.4:1.1)*mix(.3,1,E.back(pr(k,1.55,2.15))),r:mix(-40,-8,E.out(pr(k,1.55,2.3)))+Math.sin(k*3)*3,o:pr(k,1.55,1.7)});
+  put(logoCard,{x:CX,y:V?H*.47:H*.50,s:mix(.7,1,lp),o:pr(k,1.85,2.1)});
+  put(urlTxt,{x:CX,y:V?H*.64:H*.69,s:mix(.85,1,E.out(pr(k,2.15,2.7))),o:pr(k,2.15,2.5)});
+  put(slog,{x:CX,y:V?H*.72:H*.79,o:1,s:1});[...slog.children].forEach((w,i)=>{const q=E.back(pr(RT,TIMING.fin[i]-.1,TIMING.fin[i]+.3));w.style.display='inline-block';w.style.opacity=pr(RT,TIMING.fin[i]-.1,TIMING.fin[i]);w.style.transform='scale('+mix(.6,1,q)+')'});
+ }
+}
+/* tempo real (acompanha a narração) -> tempo da animação */
+function warp(T){const o=TIMING.orig,n=TIMING.ns;let i=0;while(i<o.length-2&&T>=n[i+1])i++;
+ const u=T-n[i],oL=o[i+1]-o[i],nL=n[i+1]-n[i];
+ if(nL<=oL)return o[i]+u*oL/nL;
+ const tail=Math.min(.45,oL*.4);
+ if(u<oL-tail)return o[i]+u;            // animação em velocidade normal
+ const he=nL-tail;
+ if(u<he)return o[i]+oL-tail;           // segura a cena enquanto a narração fala
+ return o[i]+oL-tail+(u-he)}            // transição de saída em velocidade normal
+function seekReal(T){window.RT=T;seekAnim(warp(T));stage.style.transformOrigin='50% 50%';stage.style.transform='scale('+(1+.014*Math.sin(T*.8))+')'}
+window.seek=seekReal;window.DURATION=TIMING.ns[TIMING.ns.length-1];window.BEATS=BEATS;
+document.fonts.ready.then(()=>{window.READY=true});
+seekReal(0);
+</script></body></html>
