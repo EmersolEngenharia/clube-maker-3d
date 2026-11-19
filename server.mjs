@@ -238,7 +238,10 @@ async function handle(req,res){
     }
     if(path==='/api/participants'&&method==='POST'){if(!guardianOf(u))fail('Esta ação é exclusiva do responsável.',403);const b=await body(req);if((await all('SELECT id FROM participants WHERE family_id=?',u.family_id)).length>=20)fail('Limite de 20 participantes por família.');(await run('INSERT INTO participants(family_id,name) VALUES(?,?)',u.family_id,str(b.name,'Nome',80)));return json(res,{ok:true});}
     if(path==='/api/projects'&&method==='POST'){
-      authorized(u,['guardian','learner']);const b=await body(req);const kind=['idea','file','link'].includes(b.kind)?b.kind:'idea';
+      const b=await body(req),onBehalf=b.onBehalf===true;let familyId;
+      if(onBehalf){if(!canOperate(u))fail('Só a equipe cria pedido em nome de uma família.',403);familyId=integer(Number(b.familyId),'Família',1,1000000000);if(!(await one('SELECT id FROM families WHERE id=?',familyId)))fail('Família não encontrada.',404);}
+      else{authorized(u,['guardian','learner']);if(!u.family_id)fail('Esta conta não está ligada a uma família.',403);familyId=u.family_id;}
+      const kind=['idea','file','link'].includes(b.kind)?b.kind:'idea';
       const cfg=(await config()),colors=cfg.materials.filter(m=>m.active).flatMap(m=>m.colors);
       if(b.color!=='Quero ajuda'&&!colors.includes(b.color))fail('Escolha uma cor disponível.');
       // A piece chosen on a model site keeps only its link and details; the file stays on the original site.
@@ -246,10 +249,12 @@ async function handle(req,res){
       const copy=kind==='link'&&b.galleryItem!=null?await gallery.forOrder(b.galleryItem):null;
       const link=copy?copy.link:kind==='link'?parseModelLink(b.link?.url):null,linkTitle=copy?copy.title:link?str(b.link?.title,'Nome da peça',200):null;
       const description=link&&!(typeof b.description==='string'&&b.description.trim())?(copy?'Igual à peça da vitrine do clube.':`Peça escolhida no ${link.siteName}.`):str(b.description,'Descrição',3000);
-      const id=Number((await run('INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',u.family_id,str(b.name,'Nome do projeto',100),description,str(b.participant,'Participante',80),kind,str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),now(),now())).lastInsertRowid);
+      const id=Number((await run('INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,status,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)',familyId,str(b.name,'Nome do projeto',100),description,str(b.participant,'Participante',80),kind,str(b.size,'Tamanho',100),str(b.color,'Cor',80),integer(b.quantity,'Quantidade',1,50),onBehalf?'review':'draft',now(),now())).lastInsertRowid);
       if(link){const c=modelCache.get(link.url),info=copy||(c?.expires>Date.now()?c.info:null),key=info?.image?'model-'+randomBytes(24).toString('hex'):null;if(key)await storage.put(key,info.image.bytes);
        try{await run('INSERT INTO model_links(project_id,site,url,model_id,profile_id,title,author,license,image_key,image_mime,license_checked_by,license_checked_at,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',id,link.site,link.url,link.modelId,link.profileId,linkTitle,info?.author??null,info?.license??null,key,key?info.image.mime:null,copy?.checkedBy??null,copy?.checkedAt??null,now());}catch(e){if(key)await storage.remove(key).catch(()=>{});throw e;}}
-      (await event(id,copy?'Pedido feito a partir da vitrine do clube, salvo como rascunho.':link?`Peça do ${link.siteName} salva como rascunho.`:'Ideia salva como rascunho.'));return json(res,{id});
+      if(onBehalf){await event(id,`Pedido criado pela equipe em nome da família, por ${u.name}.`);await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'projects.create.onbehalf',String(id),now());}
+      else await event(id,copy?'Pedido feito a partir da vitrine do clube, salvo como rascunho.':link?`Peça do ${link.siteName} salva como rascunho.`:'Ideia salva como rascunho.');
+      return json(res,{id});
     }
     if(path==='/api/projects/bulk'&&method==='POST'){
       const b=await body(req);authorized(u,['admin']);if(!isAdmin(u))fail('Ação exclusiva da administração.',403);
