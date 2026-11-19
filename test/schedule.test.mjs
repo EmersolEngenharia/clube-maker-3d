@@ -94,7 +94,7 @@ async function fixture(t,{chargeWhen='finish',createCharge=null}={}){
  const project=id=>db.one('SELECT * FROM projects WHERE id=?',id);
  // Mirrors what the order routes do around the hooks.
  const start=id=>db.transaction(async()=>{const p=await project(id);await schedule.beforeStart(p);await db.run("UPDATE projects SET status='printing' WHERE id=?",id);await schedule.onStarted(p,users.admin);});
- const finish=(id,minutes,grams)=>db.transaction(async()=>{const p=await project(id),s=await schedule.settle(p,minutes,grams);await db.run("UPDATE projects SET status='ready',actual_minutes=?,actual_grams=?,used=?,charge=?,updated=? WHERE id=?",minutes,grams,s.used,s.charge,new Date(time).toISOString(),id);await schedule.onFinished(p,users.admin);});
+ const finish=(id,minutes,grams,options={})=>db.transaction(async()=>{const p=await project(id),s=await schedule.settle(p,minutes,grams);await db.run("UPDATE projects SET status='ready',actual_minutes=?,actual_grams=?,used=?,charge=?,updated=? WHERE id=?",minutes,grams,s.used,s.charge,new Date(time).toISOString(),id);await schedule.onFinished(p,users.admin,options);});
  return {db,schedule,billing,call,users,booking,project,start,finish,sent,advance:m=>{time+=m*MIN;},charges:()=>charges,cancels:()=>cancels,now:()=>time};
 }
 test('agendamento conta na cota, some para as outras famílias e passa por validação e edição da equipe',async t=>{
@@ -139,10 +139,10 @@ test('início reorganiza a agenda; conclusão cobra o consumo real, emite o PIX 
  // Started 90 minutes late: it now ends at 14:30, so Bia's 13:30 slot is pushed after it and she is told.
  const moved=await f.db.one('SELECT starts_at FROM print_slots WHERE project_id=?',b);assert.equal(moved.starts_at,at('2026-11-09',14,45).toISOString());assert.ok(f.sent.some(m=>m.to==='family:2'&&/passou para/.test(m.text)));assert.ok(f.sent.some(m=>m.to==='family:1'&&/começou agora/.test(m.text)));
  await f.schedule.tick();assert.equal(f.charges(),0);
- f.advance(140);await f.finish(a,140,80);
+ f.advance(140);await f.finish(a,140,80,{notify:true});
  // 120 min of the allowance were reserved; 20 extra minutes (R$ 2) plus 80 g (R$ 9,60) by real consumption.
  let p=await f.project(a);assert.deepEqual([p.used,p.charge,p.minutes,p.grams],[120,1160,140,80]);
- const ready=f.sent.filter(m=>m.to==='family:1').at(-1).text;assert.match(ready,/está pronta/);assert.match(ready,/Retire na Emersol/);assert.match(ready,/R\$\s11,60/);
+ const ready=f.sent.filter(m=>m.to==='family:1').at(-1).text;assert.match(ready,/à retirar/);assert.match(ready,/Retire na Emersol/);assert.match(ready,/R\$\s11,60/);
  await f.schedule.tick();await f.schedule.tick();assert.equal(f.charges(),1);
  const c=await f.db.one('SELECT * FROM billing_contracts WHERE project_id=?',a);assert.deepEqual([c.amount_cents,c.method,c.status,c.created_by],[1160,'pix_cash','pending',2]);
  const before=f.sent.length;await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_1',externalReference:c.id,amountCents:1160,paidDate:'2026-11-09'});await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_1',externalReference:c.id,amountCents:1160,paidDate:'2026-11-09'});
@@ -151,6 +151,20 @@ test('início reorganiza a agenda; conclusão cobra o consumo real, emite o PIX 
  await f.schedule.tick();assert.equal(f.charges(),1);
  // Three days later the piece is still there: one reminder, during opening hours.
  f.advance(3*1440+60);await f.schedule.tick();await f.schedule.tick();assert.equal(f.sent.filter(m=>/continua esperando/.test(m.text)).length,1);
+});
+test('passar para à retirar não avisa no WhatsApp; isento não gera PIX',async t=>{
+ const f=await fixture(t),{users:u}=f;
+ const id=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:180,filaments:[{material:'PLA',color:'Azul',grams:80}]}))).id;
+ await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
+ f.advance(60);await f.start(id);
+ const before=f.sent.length;
+ await f.finish(id,180,80);
+ assert.equal(f.sent.slice(before).filter(m=>/à retirar/.test(m.text)).length,0);
+ await f.db.run('UPDATE projects SET exempt=1 WHERE id=?',id);
+ await f.schedule.tick();await f.schedule.tick();
+ assert.equal(f.charges(),0);
+ assert.equal(f.sent.filter(m=>/a pagar/.test(m.text)).length,0);
+ await assert.rejects(f.call(u.admin,`/api/schedule/bookings/${id}/charge`,{}),/isento/);
 });
 test('cobrança sem CPF fica registrada para a equipe e pode ser reemitida',async t=>{
  const f=await fixture(t),{users:u}=f;await f.db.run("UPDATE family_automation SET document='' WHERE family_id=1");
@@ -169,7 +183,7 @@ test('modo pré-pago: PIX na validação, troca ao editar e diferença ao conclu
  await f.schedule.tick();assert.equal(f.cancels(),1);await f.schedule.tick();assert.equal(f.charges(),2);
  c=await f.db.one("SELECT * FROM billing_contracts WHERE project_id=? AND status='pending'",id);assert.equal(c.amount_cents,600);
  await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_2',externalReference:c.id,amountCents:600,paidDate:'2026-11-09'});assert.equal((await f.project(id)).paid,1);
- f.advance(60);await f.start(id);await f.finish(id,150,70);
+ f.advance(60);await f.start(id);await f.finish(id,150,70,{notify:true});
  // Real consumption: 30 extra minutes (R$ 3) + 70 g (R$ 8,40) = R$ 11,40; R$ 6 already paid.
  let p=await f.project(id);assert.deepEqual([p.charge,p.paid],[1140,0]);assert.match(f.sent.filter(m=>m.to==='family:1').at(-1).text,/Valor a pagar: R\$\s5,40 \(já recebemos R\$\s6,00\)/);
  await f.schedule.tick();assert.equal(f.charges(),3);c=await f.db.one("SELECT * FROM billing_contracts WHERE project_id=? AND status='pending'",id);assert.equal(c.amount_cents,540);

@@ -198,13 +198,16 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   const s=await slotOf(p.id);if(!s?.self_service)return null;
   const r=await requote(p,minutes,grams,p.material_rate,p.material);return {used:r.included,charge:r.charge};
  }
- async function onFinished(p,u){
+ async function onFinished(p,u,options={}){
   const s=await slotOf(p.id);if(!s)return;const cfg=await settings(),done=await one('SELECT * FROM projects WHERE id=?',p.id),got=await received(p.id);
   await run('UPDATE print_slots SET ends_at=?,updated=? WHERE project_id=?',new Date(Math.max(clock().getTime(),Date.parse(s.starts_at)+MIN)).toISOString(),stamp(),p.id);
-  if(got>0)await run('UPDATE projects SET paid=? WHERE id=?',got>=done.charge?1:0,p.id);
-  const due=Math.max(0,done.charge-got),pay=due>0?`Valor a pagar: ${money(due)}${got?` (já recebemos ${money(got)})`:''}. O link do PIX chega em seguida.`:done.charge>0?'Está tudo pago. Obrigado!':'Não há valor adicional a pagar.';
-  await tellFamily(p.family_id,`Olá, {nome}! A peça do pedido ${number(p.id)} "${p.name}" está pronta. 🎉\nRetire na ${cfg.pickupPlace}, de ${cfg.open} às ${cfg.close}.\nConsumo real: ${span(done.actual_minutes)} de impressão e ${done.actual_grams} g de filamento.\n${pay}\nDetalhes: ${link(p.id)}`,u.id);
-  if(got>done.charge)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" terminou custando ${money(done.charge)}, mas a família já pagou ${money(got)}. Combine a devolução de ${money(got-done.charge)}.`,u.id);
+  if(got>0&&!Number(done.exempt))await run('UPDATE projects SET paid=? WHERE id=?',got>=done.charge?1:0,p.id);
+  // The stage change itself does not message anyone. WhatsApp goes out only when the team opts in.
+  if(options.notify===true){
+   const due=Math.max(0,done.charge-got),pay=Number(done.exempt)?'Isento / bonificado: não há cobrança.':due>0?`Valor a pagar: ${money(due)}${got?` (já recebemos ${money(got)})`:''}. O link do PIX chega em seguida.`:done.charge>0?'Está tudo pago. Obrigado!':'Não há valor adicional a pagar.';
+   await tellFamily(p.family_id,`Olá, {nome}! A peça do pedido ${number(p.id)} "${p.name}" está à retirar. 🎉\nRetire na ${cfg.pickupPlace}, de ${cfg.open} às ${cfg.close}.\nConsumo real: ${span(done.actual_minutes)} de impressão e ${done.actual_grams} g de filamento.\n${pay}\nDetalhes: ${link(p.id)}`,u.id);
+   if(got>done.charge)await tellTeam(`Clube Maker 3D: o pedido ${number(p.id)} "${p.name}" terminou custando ${money(done.charge)}, mas a família já pagou ${money(got)}. Combine a devolução de ${money(got-done.charge)}.`,u.id);
+  }
   await consumeStock(done,s,u,cfg,'done');
  }
  // The filament used leaves the stock lots (oldest first), split across the order's filaments in the booked proportion.
@@ -323,7 +326,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
   await startNow(p,u,'Impressão ligada pela equipe ao trabalho que a impressora começou.');return {ok:true};
  }
  async function startNow(p,u,text){await run("UPDATE projects SET status='printing',updated=? WHERE id=?",stamp(),p.id);await event(p.id,text);await onStarted(p,u);}
- async function retryCharge(u,id){if(!canOperate(u)&&!isAdmin(u))fail('Acesso operacional necessário.',403);const {p}=await own(id,u),got=await received(id);if(p.paid||p.charge<=got)fail('Este pedido não tem valor em aberto.');await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',got,stamp(),id);return {ok:true};}
+ async function retryCharge(u,id){if(!canOperate(u)&&!isAdmin(u))fail('Acesso operacional necessário.',403);const {p}=await own(id,u),got=await received(id);if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');if(p.paid||p.charge<=got)fail('Este pedido não tem valor em aberto.');await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',got,stamp(),id);return {ok:true};}
  async function route(req,res,path,method,u){
   if(!path.startsWith('/api/schedule'))return false;
   const url=new URL(req.url,'http://localhost');
@@ -365,7 +368,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
  async function chargeFailed(p,message){await db.transaction(()=>run('UPDATE print_slots SET charge_error=?,updated=? WHERE project_id=?',message,stamp(),p.id));await db.transaction(()=>tellTeam(`Clube Maker 3D: não consegui emitir a cobrança do pedido ${number(p.id)} "${p.name}" (${money(p.charge)}). ${message} Resolva e use "Emitir cobrança" no pedido: ${link(p.id)}`));}
  async function charges(){
   const cfg=await db.withRequest(()=>settings());
-  const rows=await db.withRequest(()=>all("SELECT p.*,s.charged_cents,s.validated_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.charge>0 AND s.charge_error IS NULL AND p.status IN ('queued','printing','ready','completed') ORDER BY p.id"));
+  const rows=await db.withRequest(()=>all("SELECT p.*,s.charged_cents,s.validated_at FROM print_slots s JOIN projects p ON p.id=s.project_id WHERE p.charge>0 AND p.exempt=0 AND s.charge_error IS NULL AND p.status IN ('queued','printing','ready','completed') ORDER BY p.id"));
   for(const p of rows){try{
    if(['queued','printing'].includes(p.status)&&cfg.chargeWhen!=='approval'&&!(cfg.chargeWhen==='validation'&&p.validated_at))continue;
    const state=await db.withRequest(async()=>({got:await received(p.id),pending:await one("SELECT * FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id),count:Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',p.id)).n)})),due=p.charge-state.got;
@@ -432,7 +435,7 @@ export function createSchedule({db,quota,billing,broadcasts,config,fail,str,num,
    }
    if(kind==='finished'){
     await tellTeam(`Clube Maker 3D: a impressora terminou${p?` o pedido ${number(p.id)} "${p.name}"`:' um trabalho'}${info.minutes?` em ${span(info.minutes)}`:''}. ${p?`Registre o consumo real para avisar a família e gerar a cobrança: ${link(p.id)}`:'Não há pedido em impressão no portal.'}`);
-    if(p){await event(p.id,`A impressora avisou que terminou${info.minutes?` (${span(info.minutes)} medidos)`:''}. Aguardando a conferência da equipe.`);await tellFamily(p.family_id,`Olá, {nome}! A impressora terminou a peça do pedido ${number(p.id)} "${p.name}". A equipe vai conferir e avisa quando estiver liberada para retirada.`);}
+    if(p){await event(p.id,`A impressora avisou que terminou${info.minutes?` (${span(info.minutes)} medidos)`:''}. Aguardando a conferência da equipe.`);await tellFamily(p.family_id,`Olá, {nome}! A impressora terminou a peça do pedido ${number(p.id)} "${p.name}". A equipe confere no portal antes de liberar a retirada.`);}
    }else if(kind==='failed')await tellTeam(`Clube Maker 3D: a impressora parou com erro${p?` durante o pedido ${number(p.id)} "${p.name}"`:''}. Confira a máquina${p?` e registre no portal: ${link(p.id)}`:'.'}`);
   });
  }
