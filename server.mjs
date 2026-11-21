@@ -349,6 +349,29 @@ async function handle(req,res){
       else if(action==='approve'){
         if(!guardianOf(u)||p.family_id!==u.family_id)fail('Somente o responsável desta família pode aprovar.',403);(await tx(async ()=>{const current=(await project(id,u));if(current.status!=='approval')fail('Este orçamento não está mais disponível.');const q=(await quote(current));if(b.total!==q.total||b.included!==q.included)fail('O saldo mudou. Reabra o orçamento para conferir o valor atualizado.',409);await terms.require(current.family_id);await quota.reserve(id,current.family_id,q.included);(await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),now(),q.total,now(),id));(await event(id,`Orçamento aprovado. ${q.included} minutos reservados; valor máximo adicional R$ ${(q.total/100).toFixed(2)}.`));await schedule.onApproved(current,u);}));
       }
+      else if(action==='approvefamily'){
+        // The guardian confirmed with the team (phone, WhatsApp, in person); the team records it and picks how the order is charged.
+        if(!canOperate(u))fail('Só a equipe registra a aprovação da família.',403);if(b.confirmed!==true)fail('Confirme que o responsável aprovou este orçamento.');
+        const payMethod=b.method==null||b.method===''?'pix_cash':b.method;if(payMethod!=='pix_cash'&&payMethod!=='card_installments')fail('Para o pedido, escolha PIX ou cartão.');
+        const installments=payMethod==='card_installments'?integer(b.installments??1,'Parcelas',1,12):undefined;
+        let charge=0;
+        await tx(async()=>{const current=await project(id,u);if(current.status!=='approval')fail('Este orçamento não está aguardando aprovação.');const q=await quote(current);if(b.total!==q.total||b.included!==q.included)fail('O saldo mudou. Reabra o pedido para conferir o valor atualizado.',409);
+         await terms.require(current.family_id);await quota.reserve(id,current.family_id,q.included);
+         await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),now(),q.total,now(),id);
+         await event(id,`Orçamento aprovado (confirmação do responsável registrada pela equipe, por ${u.name}). ${q.included} minutos reservados; valor máximo adicional R$ ${(q.total/100).toFixed(2)}.${payMethod==='card_installments'?' Pagamento escolhido: link de cartão.':''}`);
+         await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'projects.approve.onbehalf',String(id),now());
+         await schedule.onApproved(current,u);
+         // With a card link the automatic PIX must not be issued in between.
+         if(payMethod==='card_installments'&&q.total>0&&!Number(current.exempt))await run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',q.total,now(),id);
+         charge=q.total;});
+        if(payMethod!=='card_installments'||charge<=0||Number(p.exempt))return json(res,{ok:true});
+        try{const g=await orderPayer(p.family_id),count=Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',id)).n);
+         const created=await billing.create({familyId:p.family_id,projectId:id,purpose:'project',method:'card_installments',installments,requestKey:`order:${id}:${count+1}`,customer:{name:g.name,email:g.email,document:g.document||'',phone:g.whatsapp||''}},u);
+         await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',charge,now(),id);
+         await event(id,chargeHistory({cents:created.amountCents,method:created.method,installments:created.installments,whatsapp:created.whatsapp}));
+         return json(res,{ok:true,charge:{...created,issued:true}});}
+        catch(e){const error=String(e?.message||'Não foi possível gerar o link de cartão.').slice(0,300);await run('UPDATE print_slots SET charge_error=?,updated=? WHERE project_id=?',error,now(),id).catch(()=>{});return json(res,{ok:true,charge:{issued:false,error:`Aprovação registrada, mas o link de cartão não saiu: ${error} Use "Gerar link de pagamento" no pedido.`}});}
+      }
       else if(action==='revise'){if(!guardianOf(u)||p.family_id!==u.family_id)fail('Somente o responsável desta família pode alterar a aprovação.',403);if(p.status!=='approval')fail('Não há orçamento aguardando aprovação.');(await run("UPDATE projects SET status='review',updated=? WHERE id=?",now(),id));(await event(id,'Responsável solicitou uma alteração no orçamento.'));}
       else if(action==='cancel'){authorized(u,canOperate(u)?null:['guardian']);if(!canOperate(u)&&p.family_id!==u.family_id)fail('Ação exclusiva da sua família.',403);if(!['draft','review','question','approval','queued'].includes(p.status))fail('Após iniciar a impressão, converse com a equipe.');await cancelProject(p,u);}
       else if(action==='question'){authorized(u,canOperate(u)?null:['admin']);if(!['review','approval'].includes(p.status))fail('Esta etapa não permite pedir ajustes.');const note=str(b.note,'Pergunta',1000);(await run("UPDATE projects SET status='question',updated=? WHERE id=?",now(),id));(await run('INSERT INTO messages(project_id,user_id,body,created) VALUES(?,?,?,?)',id,u.id,note,now()));(await event(id,'A equipe precisa de uma informação para continuar.'));}
