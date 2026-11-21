@@ -22,6 +22,8 @@ test('a tela do pedido deixa a equipe escolher PIX ou cartão, com 1× como padr
  assert.match(app,/Pagar com PIX/);
  assert.match(app,/function chargeDoneModal/);
  assert.match(app,/Copiar link/);
+ assert.match(app,/Trocar para link de cartão/);
+ assert.match(app,/replace:true/);
  assert.match(app,/A família foi avisada no WhatsApp/);
  assert.match(app,/O WhatsApp não foi enviado/);
  assert.match(billingUi,/Cartão — link de pagamento \(até 12× sem juros\)/);
@@ -64,6 +66,15 @@ test('equipe gera o link do pedido; a família vê a cobrança e o padrão conti
  assert.equal(pixRow.bill_method,'pix_cash');assert.equal(Number(pixRow.bill_installments),1);
  const familyList=await guardian('/dashboard');
  assert.equal(familyList.projects.find(p=>p.id===cardId).bill_method,'card_installments');
+ await guardian(`/projects/${pixId}/charge`,{method:'card_installments',replace:true},403);
+ await admin(`/projects/${pixId}/charge`,{method:'pix_cash',replace:true},409);
+ const swapped=await admin(`/projects/${pixId}/charge`,{method:'card_installments',installments:2,replace:true});
+ assert.equal(swapped.method,'card_installments');assert.equal(swapped.installments,2);assert.equal(swapped.amountCents,pix.amountCents);assert.equal(swapped.status,'pending');
+ const swapSeen=await guardian(`/projects/${pixId}`);
+ assert.equal(swapSeen.payment.method,'card_installments');assert.match(swapSeen.events.at(-1).text,/cancelou a cobrança em PIX para trocar a forma de pagamento/);
+ await admin(`/projects/${pixId}/charge`,{method:'card_installments',replace:true},409);
+ const contracts=(await admin('/billing')).charges.filter(c=>c.projectId===pixId);
+ assert.deepEqual(contracts.map(c=>c.status).sort(),['cancelled','pending']);
  const one=await quoted();
  await admin(`/projects/${one}/charge`,{method:'card_installments',installments:1});
  assert.equal(Number((await admin('/dashboard')).projects.find(p=>p.id===one).bill_installments),1);

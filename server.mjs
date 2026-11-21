@@ -365,10 +365,16 @@ async function handle(req,res){
         const payMethod=b.method==null||b.method===''?'pix_cash':b.method;
         if(payMethod!=='pix_cash'&&payMethod!=='card_installments')fail('Para o pedido, escolha PIX ou cartão.');
         const installments=payMethod==='card_installments'?integer(b.installments??1,'Parcelas',1,12):undefined;
+        let replaced=null;
+        if(b.replace===true){
+         const open=await one("SELECT id,method,status FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review') ORDER BY created DESC LIMIT 1",id);
+         if(!open)fail('Não há cobrança em aberto para trocar.',409);if(open.status!=='pending')fail('Confira a cobrança em Cobranças antes de trocar.',409);if(open.method===payMethod)fail('A cobrança em aberto já usa esta forma de pagamento.',409);
+         await billing.cancel(open.id,u);replaced=open.method;
+        }
         const g=await orderPayer(p.family_id),count=Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',id)).n);
         const created=await billing.create({familyId:p.family_id,projectId:id,purpose:'project',method:payMethod,installments,requestKey:`order:${id}:${count+1}`,customer:{name:g.name,email:g.email,document:g.document||'',phone:g.whatsapp||''}},u);
         await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',p.charge,now(),id);
-        await event(id,chargeHistory({cents:created.amountCents,method:created.method,installments:created.installments,whatsapp:created.whatsapp}));
+        await event(id,(replaced?`A equipe cancelou a cobrança ${replaced==='pix_cash'?'em PIX':'no cartão'} para trocar a forma de pagamento. `:'')+chargeHistory({cents:created.amountCents,method:created.method,installments:created.installments,whatsapp:created.whatsapp}));
         return json(res,{...created,issued:true});
       }
       else if(action==='duplicate'){

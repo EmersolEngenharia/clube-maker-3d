@@ -68,7 +68,8 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
   await db.transaction(async()=>{await db.run("UPDATE billing_contracts SET status='cancelled',error_note=?,updated=? WHERE id=?",'Emissão descartada após conferência humana e busca por referência.',now(),c.id);await audit(u,'billing.not_issued',c.id);});return {ok:true};
  }
  async function cancel(id,u){
-  const c=await db.withRequest(()=>get(id,u));if(c.status==='cancelled')return {ok:true};
+  // The team that issues an order's charge may also replace it (PIX for a card link, for example).
+  const c=await db.withRequest(async()=>{const row=await db.one('SELECT * FROM billing_contracts WHERE id=?',id);if(!row)fail('Cobrança não encontrada.',404);need(actor(u,row.family_id)||(row.purpose==='project'&&canOperate(u)));return row;});if(c.status==='cancelled')return {ok:true};
   if(c.status==='needs_review'||c.status==='creating')fail('Recupere e confira a cobrança no Asaas antes de cancelar.',409);
   if(!recurring(c.method)&&c.status==='active')fail('Cobrança paga não pode ser cancelada. Um estorno exige decisão humana no Asaas.',409);
   if(c.provider==='asaas'){
