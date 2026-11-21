@@ -371,6 +371,28 @@ async function handle(req,res){
         await event(id,chargeHistory({cents:created.amountCents,method:created.method,installments:created.installments,whatsapp:created.whatsapp}));
         return json(res,{...created,issued:true});
       }
+      else if(action==='duplicate'){
+        // A repeat order: same family, piece, files and quote. It waits for the guardian's approval like any new quote.
+        if(!canOperate(u))fail('Só a equipe duplica pedidos.',403);if(!p.minutes||!p.material)fail('Só é possível duplicar um pedido que já tem orçamento.');
+        const keys=[];let copyId;
+        try{
+         const files=await all('SELECT name,path,size FROM files WHERE project_id=? ORDER BY id',id),model=await one('SELECT * FROM model_links WHERE project_id=?',id);
+         const copied=[];for(const f of files){const key=randomBytes(24).toString('hex');await storage.put(key,await storage.get(f.path));keys.push(key);copied.push({...f,path:key});}
+         const imageKey=model?.image_key?'model-'+randomBytes(24).toString('hex'):null;if(imageKey){await storage.put(imageKey,await storage.get(model.image_key));keys.push(imageKey);}
+         await tx(async()=>{
+          copyId=Number((await run("INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,status,created,updated,minutes,grams,material,material_rate,extra_rate,quote_note,bonus_minutes,bonus_cents,custom_rates,extra_items) VALUES(?,?,?,?,?,?,?,?,'approval',?,?,?,?,?,?,?,?,?,?,?,?)",p.family_id,p.name,p.description,p.participant,p.kind,p.size,p.color,p.quantity,now(),now(),p.minutes,p.grams,p.material,p.material_rate,p.extra_rate,p.quote_note,p.bonus_minutes,p.bonus_cents,p.custom_rates,JSON.stringify(readExtraItems(p.extra_items)))).lastInsertRowid);
+          for(const f of copied)await run('INSERT INTO files(project_id,name,path,size) VALUES(?,?,?,?)',copyId,f.name,f.path,f.size);
+          if(model)await run('INSERT INTO model_links(project_id,site,url,model_id,profile_id,title,author,license,image_key,image_mime,license_checked_by,license_checked_at,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',copyId,model.site,model.url,model.model_id,model.profile_id,model.title,model.author,model.license,imageKey,imageKey?model.image_mime:null,model.license_checked_by,model.license_checked_at,now());
+          const listed=extraItemsText(readExtraItems(p.extra_items));
+          await event(copyId,`Pedido repetido pela equipe a partir do pedido #${String(id).padStart(3,'0')}, por ${u.name}. Mesma peça, quantidade e orçamento.`);
+          await event(copyId,`Orçamento preparado. Proposta à família: ${String(p.quote_note).replace(/[.!?…]\s*$/,'')}.${Number(p.custom_rates)?` Valores ajustados pela equipe: hora ${brMoney(p.extra_rate)} e filamento ${brMoney(p.material_rate)}/kg.`:''}${listed?` Itens adicionais: ${listed}.`:''} Aguardando aprovação do responsável.`);
+          await event(id,`A equipe repetiu este pedido no pedido #${String(copyId).padStart(3,'0')}.`);
+          await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'projects.duplicate',`${id}->${copyId}`,now());
+         });
+        }catch(e){for(const k of keys)await storage.remove(k).catch(()=>{});throw e;}
+        {const fresh=await project(copyId,u);await schedule.onQuoted(fresh,u,await quote(fresh));}
+        return json(res,{ok:true,id:copyId});
+      }
       else fail('Ação não encontrada.',404);
       return json(res,{ok:true});
     }

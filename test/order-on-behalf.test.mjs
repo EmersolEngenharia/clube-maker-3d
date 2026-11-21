@@ -14,6 +14,7 @@ test('o botão de pedido da equipe fica na lista de pedidos',()=>{
  assert.match(app,/Criar e preparar orçamento/);
  assert.match(app,/order-for-family/);
  assert.match(app,/onBehalf/);
+ assert.match(app,/Repetir pedido/);
 });
 
 test('a equipe cria o pedido em nome da família e já pode orçar',async t=>{
@@ -64,6 +65,18 @@ test('a equipe cria o pedido em nome da família e já pode orçar',async t=>{
  assert.equal(quoted.bonus_minutes,30);
  assert.ok(quoted.quote.total>=0);
  await guardian(`/projects/${created.id}/approve`,{total:quoted.quote.total,included:quoted.quote.included});
+ assert.equal((await guardian(`/projects/${created.id}`)).status,'queued');
+ await guardian(`/projects/${created.id}/duplicate`,{},403);
+ await op(`/projects/${draft.id}/duplicate`,{},400);
+ const repeat=await op(`/projects/${created.id}/duplicate`,{});
+ assert.notEqual(repeat.id,created.id);
+ const again=await guardian(`/projects/${repeat.id}`);
+ for(const k of ['family_id','name','description','participant','size','color','quantity','minutes','grams','material','material_rate','extra_rate','quote_note','bonus_minutes','bonus_cents'])assert.equal(again[k],quoted[k],k);
+ assert.equal(again.status,'approval');
+ assert.equal(again.files.length,1);
+ assert.equal(again.quote.total,quoted.quote.total);
+ assert.match(again.events.map(e=>e.text).join('\n'),/Pedido repetido pela equipe a partir do pedido #0*\d+, por operador/);
+ assert.match((await guardian(`/projects/${created.id}`)).events.at(-1).text,/repetiu este pedido/);
  assert.equal((await guardian(`/projects/${created.id}`)).status,'queued');
  await op('/projects',{...order,kind:'link',onBehalf:true,familyId:family.id,link:{url:'https://makerworld.com',title:'Peça'}},400);
  const linked=await op('/projects',{...order,kind:'link',description:'',onBehalf:true,familyId:family.id,link:{url:'https://makerworld.com/pt/models/777-polvo',title:'Polvo'}});
