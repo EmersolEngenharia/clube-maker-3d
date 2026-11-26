@@ -19,6 +19,8 @@ test('webhook autentica antes de parsear; eventos e zero não queimam recebiment
  for(const [event,type]of Object.entries({PAYMENT_RECEIVED:'payment.paid',PAYMENT_CONFIRMED:'payment.paid',PAYMENT_OVERDUE:'payment.failed',PAYMENT_REFUNDED:'payment.refunded',PAYMENT_CHARGEBACK_REQUESTED:'payment.refunded',OTHER_EVENT:'unknown'})){
   const p=await provider.parseWebhook(JSON.stringify({event,payment:{id:'pay_1',value:123.45,externalReference:'ours'}}),headers);assert.equal(p.type,type);assert.equal(p.amountCents,12345);
  }
+ const card=await provider.parseWebhook(JSON.stringify({event:'PAYMENT_CONFIRMED',payment:{id:'pay_card',value:11.6,billingType:'CREDIT_CARD',externalReference:'ours',installment:'inst_9'}}),headers);
+ assert.equal(card.type,'payment.paid');assert.equal(card.amountCents,1160);assert.equal(card.gatewayInstallmentId,'inst_9');assert.equal(card.gatewayChargeId,'pay_card');
  for(const value of[undefined,0,-1,1.234])assert.equal((await provider.parseWebhook(JSON.stringify({event:'PAYMENT_RECEIVED',payment:{value}}),headers)).amountCents,undefined);
 });
 test('reutiliza cliente e completa CPF; não envia celular inválido',async()=>{
@@ -42,6 +44,7 @@ test('quatro métodos, fatura da assinatura, 1× sem installmentCount e 12× com
   if(method.endsWith('recurring')){assert.equal(creation.path,'/subscriptions');assert.equal(creation.body.cycle,'MONTHLY');assert.equal(creation.body.nextDueDate,'2026-11-01');assert.equal(r.gatewayChargeId,'pay_first');assert.equal(r.gatewaySubscriptionId,'sub_1');}
   if(n===1)assert.equal('installmentCount' in creation.body,false);if(n===12){assert.equal(creation.body.installmentCount,12);assert.equal(creation.body.totalValue,150);}
   assert.equal(creation.body.billingType,method.startsWith('pix_')?'PIX':'CREDIT_CARD');assert.equal(r.checkoutUrl,'https://www.asaas.com/i/test');
+  for(const secret of ['creditCard','creditCardHolderInfo','creditCardToken','cardNumber'])assert.equal(secret in creation.body,false);
  }
 });
 test('fatura indisponível não recria assinatura; cancelamento 404 é sucesso e erros não vazam chave',async()=>{

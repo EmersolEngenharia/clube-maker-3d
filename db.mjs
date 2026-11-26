@@ -3,6 +3,14 @@ import {mkdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 const initialSettings={monthly:15000,annual:150000,hours:12,extra:600,markup:20,materials:[{name:'PLA',cost:10000,colors:['Branco','Azul','Verde','Laranja'],active:true}]};
 export function postgresSQL(sql){let n=0,quoted=false,out='';for(let i=0;i<sql.length;i++){const c=sql[i];if(c==="'"){if(quoted&&sql[i+1]==="'"){out+="''";i++;continue;}quoted=!quoted;}out+=c==='?'&&!quoted?'$'+(++n):c;}return out;}
+// Old local files were created before cost_cents. Copy the linked cash amount once, when the column appears.
+export function ensureStockCost(sqlite){
+ try{sqlite.prepare('SELECT cost_cents FROM stock_lots LIMIT 0').get();return false;}
+ catch(e){if(!/cost_cents/.test(String(e.message)))throw e;}
+ sqlite.exec('ALTER TABLE stock_lots ADD COLUMN cost_cents INTEGER NOT NULL DEFAULT 0');
+ sqlite.exec('UPDATE stock_lots SET cost_cents=COALESCE((SELECT cents FROM cash_entries WHERE id=stock_lots.entry_id),0)');
+ return true;
+}
 export async function createDatabase({data}){
  const mode=process.env.DATABASE_MODE||'sqlite';
  if(process.env.NODE_ENV==='production'&&mode!=='postgres')throw new Error('Produção exige DATABASE_MODE=postgres.');
@@ -11,7 +19,8 @@ export async function createDatabase({data}){
  async function exclusive(fn){const prev=queue;let release;queue=new Promise(r=>release=r);await prev;try{return await fn();}finally{release();}}
  if(mode==='sqlite'){
   const {DatabaseSync}=await import('node:sqlite');mkdirSync(data,{recursive:true});sqlite=new DatabaseSync(join(data,'maker.sqlite'));sqlite.exec(readFileSync(new URL('./db/sqlite.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/extensions.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/finance.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/attribution.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/billing.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/messaging.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/models.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/gallery.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/schedule.sql',import.meta.url),'utf8'));sqlite.exec(readFileSync(new URL('./db/terms.sql',import.meta.url),'utf8'));
-  for(const col of ['bonus_minutes INTEGER NOT NULL DEFAULT 0','bonus_cents INTEGER NOT NULL DEFAULT 0','custom_rates INTEGER NOT NULL DEFAULT 0']){try{sqlite.exec('ALTER TABLE projects ADD COLUMN '+col);}catch{/* banco novo já nasce com as colunas */}}
+  for(const col of ['bonus_minutes INTEGER NOT NULL DEFAULT 0','bonus_cents INTEGER NOT NULL DEFAULT 0','custom_rates INTEGER NOT NULL DEFAULT 0',"extra_items TEXT NOT NULL DEFAULT '[]'","picked_up_at TEXT"]){try{sqlite.exec('ALTER TABLE projects ADD COLUMN '+col);}catch{/* banco novo já nasce com as colunas */}}
+  ensureStockCost(sqlite);
   sqlite.prepare('INSERT OR IGNORE INTO settings VALUES(1,?)').run(JSON.stringify(initialSettings));
  }else if(mode==='postgres'){
   if(!process.env.DATABASE_URL)throw new Error('Configure DATABASE_URL no ambiente privado do servidor.');
@@ -90,7 +99,10 @@ export async function createDatabase({data}){
   const exempt=await api.one("SELECT 1 AS ok FROM information_schema.columns WHERE table_schema='maker3d' AND table_name='projects' AND column_name='exempt'");
   const bonus=await api.one("SELECT 1 AS ok FROM information_schema.columns WHERE table_schema='maker3d' AND table_name='projects' AND column_name='bonus_minutes'");
   const rates=await api.one("SELECT 1 AS ok FROM information_schema.columns WHERE table_schema='maker3d' AND table_name='projects' AND column_name='custom_rates'");
-  if(!schema.profiles||!schema.posts||!schema.audit||!schema.benefits||!schema.contacts||!schema.finance||!schema.allocations||!schema.permissions||!schema.attributions||!schema.billing||!schema.automation||!schema.outbox||!schema.broadcasts||!schema.extras||!schema.models||!schema.gallery||!schema.schedule||!schema.terms||!exempt||!bonus||!rates){await api.close();throw new Error('Atualize o banco com a migração de perfis e db/benefits-upgrade.sql e db/finance-postgres.sql e db/attribution-postgres.sql e db/billing-postgres.sql e db/messaging-postgres.sql (incluindo comunicados e anexos da conversa) e db/models-postgres.sql e db/gallery-postgres.sql e db/schedule-postgres.sql e db/terms-postgres.sql e db/exempt-postgres.sql e supabase/migrations/20261119140000_maker3d_quote_bonus.sql antes de iniciar.');}
+  const extraItems=await api.one("SELECT 1 AS ok FROM information_schema.columns WHERE table_schema='maker3d' AND table_name='projects' AND column_name='extra_items'");
+  const picked=await api.one("SELECT 1 AS ok FROM information_schema.columns WHERE table_schema='maker3d' AND table_name='projects' AND column_name='picked_up_at'");
+  const stockCost=await api.one("SELECT 1 AS ok FROM information_schema.columns WHERE table_schema='maker3d' AND table_name='stock_lots' AND column_name='cost_cents'");
+  if(!schema.profiles||!schema.posts||!schema.audit||!schema.benefits||!schema.contacts||!schema.finance||!schema.allocations||!schema.permissions||!schema.attributions||!schema.billing||!schema.automation||!schema.outbox||!schema.broadcasts||!schema.extras||!schema.models||!schema.gallery||!schema.schedule||!schema.terms||!exempt||!bonus||!rates||!extraItems||!picked||!stockCost){await api.close();throw new Error('Atualize o banco com a migração de perfis e db/benefits-upgrade.sql e db/finance-postgres.sql e db/attribution-postgres.sql e db/billing-postgres.sql e db/messaging-postgres.sql (incluindo comunicados e anexos da conversa) e db/models-postgres.sql e db/gallery-postgres.sql e db/schedule-postgres.sql e db/terms-postgres.sql e db/exempt-postgres.sql e supabase/migrations/20261119140000_maker3d_quote_bonus.sql e supabase/migrations/20261119220000_maker3d_quote_extra_items.sql e supabase/migrations/20261119230000_maker3d_picked_up.sql e supabase/migrations/20261120000000_maker3d_stock_lot_cost.sql antes de iniciar.');}
  }
  if(mode==='postgres'&&process.env.NODE_ENV==='production'){const role=await api.one('SELECT current_user AS name');if(role.name!=='maker3d_app'){await api.close();throw new Error('Use o usuário dedicado maker3d_app na conexão de produção.');}}
  if(!sqlite)await api.withRequest(()=>run('INSERT INTO settings(id,value) VALUES(1,?) ON CONFLICT(id) DO NOTHING',JSON.stringify(initialSettings)),true);

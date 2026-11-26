@@ -144,13 +144,31 @@ test('início reorganiza a agenda; conclusão cobra o consumo real, emite o PIX 
  let p=await f.project(a);assert.deepEqual([p.used,p.charge,p.minutes,p.grams],[120,1160,140,80]);
  const ready=f.sent.filter(m=>m.to==='family:1').at(-1).text;assert.match(ready,/à retirar/);assert.match(ready,/Retire na Emersol/);assert.match(ready,/R\$\s11,60/);
  await f.schedule.tick();await f.schedule.tick();assert.equal(f.charges(),1);
+ assert.equal((await f.db.all('SELECT text FROM events WHERE project_id=? AND text LIKE ?',a,'%emitida via PIX%')).length,1);
  const c=await f.db.one('SELECT * FROM billing_contracts WHERE project_id=?',a);assert.deepEqual([c.amount_cents,c.method,c.status,c.created_by],[1160,'pix_cash','pending',2]);
  const before=f.sent.length;await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_1',externalReference:c.id,amountCents:1160,paidDate:'2026-11-09'});await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_1',externalReference:c.id,amountCents:1160,paidDate:'2026-11-09'});
  assert.equal((await f.project(a)).paid,1);const entries=await f.db.all("SELECT * FROM cash_entries WHERE category='printing'");assert.equal(entries.length,1);assert.equal(entries[0].cents,1160);
+ assert.equal((await f.db.all('SELECT text FROM events WHERE project_id=? AND text LIKE ?',a,'%recebido via PIX%')).length,1);
  const after=f.sent.slice(before);assert.equal(after.length,2);assert.ok(after.some(m=>m.to==='family:1'&&/Recebemos o pagamento/.test(m.text)));assert.ok(after.some(m=>m.to==='team'&&/Baixa e lançamento/.test(m.text)));
  await f.schedule.tick();assert.equal(f.charges(),1);
  // Three days later the piece is still there: one reminder, during opening hours.
  f.advance(3*1440+60);await f.schedule.tick();await f.schedule.tick();assert.equal(f.sent.filter(m=>/continua esperando/.test(m.text)).length,1);
+});
+test('pedido já retirado não recebe lembrete e o webhook conclui o pagamento',async t=>{
+ const f=await fixture(t),{users:u}=f;
+ const id=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:180,filaments:[{material:'PLA',color:'Azul',grams:80}]}))).id;
+ await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
+ f.advance(60);await f.start(id);await f.finish(id,180,80);
+ await f.schedule.tick();
+ const c=await f.db.one('SELECT * FROM billing_contracts WHERE project_id=?',id);
+ await f.db.run("UPDATE projects SET status='picked',picked_up_at=? WHERE id=?",new Date(f.now()).toISOString(),id);
+ f.advance(3*1440+60);await f.schedule.tick();await f.schedule.tick();
+ assert.equal(f.sent.filter(m=>/continua esperando/.test(m.text)).length,0);
+ assert.equal((await f.project(id)).status,'picked');
+ await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:c.gateway_charge_id,externalReference:c.id,amountCents:c.amount_cents,paidDate:'2026-11-12'});
+ const done=await f.project(id);
+ assert.equal(done.paid,1);assert.equal(done.status,'completed');
+ assert.match((await f.db.one('SELECT text FROM events WHERE project_id=? AND text LIKE ?',id,'%Pedido concluído%')).text,/Pagamento recebido\. Pedido concluído/);
 });
 test('passar para à retirar não avisa no WhatsApp; isento não gera PIX',async t=>{
  const f=await fixture(t),{users:u}=f;
@@ -171,7 +189,7 @@ test('cobrança sem CPF fica registrada para a equipe e pode ser reemitida',asyn
  const {id}=await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString()}));await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
  f.advance(60);await f.start(id);await f.finish(id,180,100);await f.schedule.tick();await f.schedule.tick();
  assert.equal(f.charges(),0);assert.match((await f.db.one('SELECT charge_error FROM print_slots WHERE project_id=?',id)).charge_error,/CPF/);assert.equal(f.sent.filter(m=>m.to==='team'&&/não consegui emitir/.test(m.text)).length,1);
- await f.db.run("UPDATE family_automation SET document='12345678909' WHERE family_id=1");await f.call(u.admin,`/api/schedule/bookings/${id}/charge`,{});await f.schedule.tick();assert.equal(f.charges(),1);
+ await f.db.run("UPDATE family_automation SET document='12345678909' WHERE family_id=1");const issued=await f.call(u.admin,`/api/schedule/bookings/${id}/charge`,{});assert.equal(issued.method,'pix_cash');assert.equal(issued.issued,true);assert.match((await f.db.one('SELECT text FROM events WHERE project_id=? ORDER BY id DESC LIMIT 1',id)).text,/emitida via PIX/);await f.schedule.tick();assert.equal(f.charges(),1);
 });
 test('modo pré-pago: PIX na validação, troca ao editar e diferença ao concluir',async t=>{
  const f=await fixture(t,{chargeWhen:'validation'}),{users:u}=f;
@@ -192,6 +210,32 @@ test('modo pré-pago: PIX na validação, troca ao editar e diferença ao conclu
  await f.schedule.tick();assert.equal(f.charges(),3);
 });
 
+test('link de cartão do pedido é reemitido no cartão quando o valor muda; o automático segue PIX',async t=>{
+ const f=await fixture(t),{users:u}=f;
+ const id=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:180,filaments:[{material:'PLA',color:'Azul',grams:80}]}))).id;
+ await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
+ f.advance(60);await f.start(id);await f.finish(id,180,80);
+ const due=(await f.project(id)).charge;
+ await f.billing.create({familyId:1,projectId:id,purpose:'project',method:'card_installments',installments:4,requestKey:`order:${id}:1`,customer:{name:'Ana',email:'a@test.example',document:'12345678909',phone:'5564999991234'}},u.ana);
+ assert.equal(f.charges(),1);
+ await f.db.run('UPDATE projects SET charge=? WHERE id=?',due+500,id);
+ await f.schedule.tick();assert.equal(f.cancels(),1);assert.equal(f.charges(),1);
+ await f.schedule.tick();assert.equal(f.charges(),2);
+ const c=await f.db.one("SELECT * FROM billing_contracts WHERE project_id=? AND status='pending'",id);
+ assert.equal(c.method,'card_installments');assert.equal(c.installments,4);assert.equal(c.amount_cents,due+500);
+});
+test('primeira parcela não abre outra cobrança enquanto o plano do cartão não fecha',async t=>{
+ const f=await fixture(t),{users:u}=f;
+ const id=(await f.call(u.ana,'/api/schedule/bookings',f.booking({startsAt:at('2026-11-09',11).toISOString(),minutes:180,filaments:[{material:'PLA',color:'Azul',grams:80}]}))).id;
+ await f.call(u.admin,`/api/schedule/bookings/${id}/validate`,{});
+ f.advance(60);await f.start(id);await f.finish(id,180,80);
+ const due=(await f.project(id)).charge;
+ const c=await f.billing.create({familyId:1,projectId:id,purpose:'project',method:'card_installments',installments:3,requestKey:`order:${id}:1`,customer:{name:'Ana',email:'a@test.example',document:'12345678909',phone:'5564999991234'}},u.ana);
+ await f.billing.handleEvent({type:'payment.paid',gatewayChargeId:'pay_1',externalReference:c.id,amountCents:Math.min(100,due-1),paidDate:'2026-11-09'});
+ assert.equal((await f.project(id)).paid,0);assert.equal((await f.db.one('SELECT status FROM billing_contracts WHERE id=?',c.id)).status,'active');
+ await f.schedule.tick();assert.equal(f.charges(),1);
+ await assert.rejects(f.billing.create({familyId:1,projectId:id,purpose:'project',method:'pix_cash',requestKey:`order:${id}:2`,customer:{name:'Ana',email:'a@test.example',document:'12345678909',phone:'5564999991234'}},u.admin),e=>e.status===409);
+});
 test('arquivo que a impressora começou é ligado ao pedido certo, ou a equipe escolhe',()=>{
  const now=at('2026-11-10',9),o=(id,name,h)=>({id,name,starts_at:at('2026-11-10',h).toISOString()});
  const orders=[o(1,'Cortadores de biscoito Papai Noel',14),o(2,'Vaso geométrico',9),o(3,'Chaveiro foguete',16)];

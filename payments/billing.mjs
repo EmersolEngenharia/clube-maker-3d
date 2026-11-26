@@ -1,9 +1,11 @@
 import {randomUUID} from 'node:crypto';
 import {AsaasProvider} from './asaas.mjs';
 import {ManualProvider,methods,recurring,ProviderError} from './provider.mjs';
-import {isAdmin,canFinance} from '../permissions.mjs';
+import {isAdmin,canFinance,canOperate} from '../permissions.mjs';
 import {localDate} from '../quota.mjs';
 const now=()=>new Date().toISOString();
+// A card plan stays open after the first installment: the contract is active, but later parcels still cover the same charge.
+export const outstandingInstallments="(method='card_installments' AND installments>1 AND status='active' AND amount_cents>(SELECT COALESCE(SUM(amount_cents),0) FROM billing_receipts WHERE contract_id=billing_contracts.id AND status='paid'))";
 export function nextPeriod(start,plan){const d=new Date(start+'T12:00:00Z'),day=d.getUTCDate();d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+(plan==='annual'?12:1));const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));return d.toISOString().slice(0,10);}
 const daysAhead=n=>{const d=new Date(localDate()+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);};
 const validDay=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v+'T12:00:00Z'))?v:null;
@@ -27,16 +29,17 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
  });}
  async function create(b,u){
   const intent=await db.transaction(async()=>{
-   need(canFinance(u)||u.role==='guardian');const fid=integer(b.familyId||u.family_id,'Família',1,2147483647);need(actor(u,fid));const f=await db.one('SELECT * FROM families WHERE id=?',fid);if(!f)fail('Família não encontrada.',404);
+   const projectStaff=b.purpose==='project'&&(canFinance(u)||canOperate(u));
+   need(canFinance(u)||u.role==='guardian'||projectStaff);const fid=integer(b.familyId||u.family_id,'Família',1,2147483647);need(actor(u,fid)||projectStaff);const f=await db.one('SELECT * FROM families WHERE id=?',fid);if(!f)fail('Família não encontrada.',404);
    const key=str(b.requestKey,'Identificação da cobrança',100),existing=await db.one('SELECT * FROM billing_contracts WHERE request_key=?',key);if(existing){need(actor(u,existing.family_id));return {existing};}
    if(!methods.includes(b.method))fail('Forma de pagamento inválida.');
    const plan=b.plan||f.plan;if(!['monthly','annual'].includes(plan))fail('Plano inválido.');
    const installments=b.method==='card_installments'?integer(b.installments??1,'Parcelas',1,12):1;
    if(b.purpose==='project'&&!b.projectId)fail('Escolha um projeto concluído.');
    const projectId=b.projectId?integer(b.projectId,'Projeto',1,2147483647):null,cfg=await config();let amount=plan==='annual'?cfg.annual:cfg.monthly;
-   if(projectId){const p=await db.one('SELECT * FROM projects WHERE id=? AND family_id=?',projectId,fid);if(!p||!['queued','printing','ready','completed'].includes(p.status)||p.paid)fail('O projeto precisa estar aprovado e sem pagamento.');if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');if(recurring(b.method))fail('Impressões avulsas não podem gerar assinatura.');amount=p.charge-await projectReceived(projectId);}
+   if(projectId){const p=await db.one('SELECT * FROM projects WHERE id=? AND family_id=?',projectId,fid);if(!p||!['queued','printing','ready','picked','completed'].includes(p.status)||p.paid)fail('O projeto precisa estar aprovado e sem pagamento.');if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');if(recurring(b.method))fail('Impressões avulsas não podem gerar assinatura.');amount=p.charge-await projectReceived(projectId);}
    integer(amount,'Valor em centavos',1,10000000);
-   const pending=await db.one("SELECT id FROM billing_contracts WHERE family_id=? AND purpose=? AND (status IN ('creating','pending','needs_review') OR (provider='asaas' AND method IN ('pix_recurring','card_recurring') AND status IN ('active','past_due')))"+(projectId?' AND project_id=?':''),fid,projectId?'project':'membership',...(projectId?[projectId]:[]));
+   const pending=await db.one("SELECT id FROM billing_contracts WHERE family_id=? AND purpose=? AND (status IN ('creating','pending','needs_review') OR (provider='asaas' AND method IN ('pix_recurring','card_recurring') AND status IN ('active','past_due')) OR "+outstandingInstallments+")"+(projectId?' AND project_id=?':''),fid,projectId?'project':'membership',...(projectId?[projectId]:[]));
    if(pending)fail('Já existe cobrança ou recorrência em andamento. Abra a cobrança existente antes de criar outra.',409);
    const customer=b.customer||{},name=str(customer.name||u.name,'Nome do responsável',100),email=str(customer.email||u.email,'E-mail',150),document=String(customer.document||'').replace(/\D/g,''),phone=typeof customer.phone==='string'?customer.phone.slice(0,30):'';
    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('E-mail inválido.');if(enabled&&!/^(\d{11}|\d{14})$/.test(document))fail('Informe o CPF ou CNPJ do pagador para emitir a cobrança.');
@@ -44,7 +47,7 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
    await audit(u,'billing.create',id);return {id,input:{subscriptionId:id,method:b.method,amountCents:amount,installments:b.method==='card_installments'?installments:undefined,cycle:plan==='annual'?'YEARLY':'MONTHLY',customer:{name,email,document:document||undefined,phone},splitRules,projectDue:projectId?daysAhead(3):undefined,description:projectId?'Impressão #'+projectId+' — Clube Maker 3D Emersol':(plan==='annual'?'Anuidade':'Mensalidade')+' — Clube Maker 3D Emersol'}};
   });
   if(intent.existing)return safe(intent.existing);
-  try{const dueDate=intent.input.projectDue||localDate(),{projectDue,...input}=intent.input,result=await selected.createCharge({...input,dueDate});const c=await finalize(intent.id,result);try{await onCharge({...c,...result,dueDate});}catch{/* Scheduler recovers invoices by contract; issuing never repeats because notification failed. */}return c;}
+  try{const dueDate=intent.input.projectDue||localDate(),{projectDue,...input}=intent.input,result=await selected.createCharge({...input,dueDate});const c=await finalize(intent.id,result);let whatsapp=false;try{whatsapp=(await onCharge({...c,...result,dueDate}))?.queued===true;}catch{/* Scheduler recovers invoices by contract; issuing never repeats because notification failed. */}return {...c,whatsapp};}
   catch(e){await db.transaction(async()=>{await db.run("UPDATE billing_contracts SET status=CASE WHEN status='creating' THEN 'needs_review' ELSE status END,error_note=?,updated=? WHERE id=?",e.uncertain?'Resposta não confirmada. Recupere a cobrança por referência; não repita a criação.':'Emissão recusada. Confira os dados e a integração antes de tentar novamente.',now(),intent.id);});throw e;}
  }
  async function refresh(id,u){
@@ -65,7 +68,8 @@ export function createBilling({db,fail,str,integer,config,env=process.env,provid
   await db.transaction(async()=>{await db.run("UPDATE billing_contracts SET status='cancelled',error_note=?,updated=? WHERE id=?",'Emissão descartada após conferência humana e busca por referência.',now(),c.id);await audit(u,'billing.not_issued',c.id);});return {ok:true};
  }
  async function cancel(id,u){
-  const c=await db.withRequest(()=>get(id,u));if(c.status==='cancelled')return {ok:true};
+  // The team that issues an order's charge may also replace it (PIX for a card link, for example).
+  const c=await db.withRequest(async()=>{const row=await db.one('SELECT * FROM billing_contracts WHERE id=?',id);if(!row)fail('Cobrança não encontrada.',404);need(actor(u,row.family_id)||(row.purpose==='project'&&canOperate(u)));return row;});if(c.status==='cancelled')return {ok:true};
   if(c.status==='needs_review'||c.status==='creating')fail('Recupere e confira a cobrança no Asaas antes de cancelar.',409);
   if(!recurring(c.method)&&c.status==='active')fail('Cobrança paga não pode ser cancelada. Um estorno exige decisão humana no Asaas.',409);
   if(c.provider==='asaas'){

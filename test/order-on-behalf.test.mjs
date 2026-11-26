@@ -14,6 +14,8 @@ test('o botão de pedido da equipe fica na lista de pedidos',()=>{
  assert.match(app,/Criar e preparar orçamento/);
  assert.match(app,/order-for-family/);
  assert.match(app,/onBehalf/);
+ assert.match(app,/Repetir pedido/);
+ assert.match(app,/Registrar aprovação da família/);
 });
 
 test('a equipe cria o pedido em nome da família e já pode orçar',async t=>{
@@ -65,6 +67,31 @@ test('a equipe cria o pedido em nome da família e já pode orçar',async t=>{
  assert.ok(quoted.quote.total>=0);
  await guardian(`/projects/${created.id}/approve`,{total:quoted.quote.total,included:quoted.quote.included});
  assert.equal((await guardian(`/projects/${created.id}`)).status,'queued');
+ await guardian(`/projects/${created.id}/duplicate`,{},403);
+ await op(`/projects/${draft.id}/duplicate`,{},400);
+ const repeat=await op(`/projects/${created.id}/duplicate`,{});
+ assert.notEqual(repeat.id,created.id);
+ const again=await guardian(`/projects/${repeat.id}`);
+ for(const k of ['family_id','name','description','participant','size','color','quantity','minutes','grams','material','material_rate','extra_rate','quote_note','bonus_minutes','bonus_cents'])assert.equal(again[k],quoted[k],k);
+ assert.equal(again.status,'approval');
+ assert.equal(again.files.length,1);
+ assert.equal(again.quote.total,quoted.quote.total);
+ assert.match(again.events.map(e=>e.text).join('\n'),/Pedido repetido pela equipe a partir do pedido #0*\d+, por operador/);
+ assert.match((await guardian(`/projects/${created.id}`)).events.at(-1).text,/repetiu este pedido/);
+ assert.equal((await guardian(`/projects/${created.id}`)).status,'queued');
+ const asQuoted={total:again.quote.total,included:again.quote.included};
+ await guardian(`/projects/${repeat.id}/approvefamily`,{...asQuoted,confirmed:true},403);
+ await op(`/projects/${repeat.id}/approvefamily`,asQuoted,400);
+ await op(`/projects/${repeat.id}/approvefamily`,{...asQuoted,confirmed:true,total:asQuoted.total+1},409);
+ const card=await op(`/projects/${repeat.id}/approvefamily`,{...asQuoted,confirmed:true,method:'card_installments',installments:2});
+ const approved=await guardian(`/projects/${repeat.id}`);
+ assert.equal(approved.status,'queued');
+ assert.match(approved.events.map(e=>e.text).join('\n'),/confirmação do responsável registrada pela equipe, por operador/);
+ assert.ok(again.quote.total>0);{assert.equal(card.charge.issued,true);assert.equal(card.charge.method,'card_installments');assert.equal(approved.payment.method,'card_installments');assert.equal(approved.payment.installments,2);}
+ await op(`/projects/${repeat.id}/approvefamily`,{...asQuoted,confirmed:true},400);
+ const pixRepeat=await op(`/projects/${created.id}/duplicate`,{}),pixView=await guardian(`/projects/${pixRepeat.id}`);
+ const pixApproved=await op(`/projects/${pixRepeat.id}/approvefamily`,{total:pixView.quote.total,included:pixView.quote.included,confirmed:true});
+ assert.equal(pixApproved.charge,undefined);assert.equal((await guardian(`/projects/${pixRepeat.id}`)).status,'queued');
  await op('/projects',{...order,kind:'link',onBehalf:true,familyId:family.id,link:{url:'https://makerworld.com',title:'Peça'}},400);
  const linked=await op('/projects',{...order,kind:'link',description:'',onBehalf:true,familyId:family.id,link:{url:'https://makerworld.com/pt/models/777-polvo',title:'Polvo'}});
  const linkView=await guardian(`/projects/${linked.id}`);

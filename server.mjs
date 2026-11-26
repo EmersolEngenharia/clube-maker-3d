@@ -8,7 +8,7 @@ import {createAutomation} from './messaging/automation.mjs';
 import {createBroadcasts,mediaType} from './messaging/broadcasts.mjs';
 import {EvolutionClient} from './messaging/evolution.mjs';
 import {AsaasProvider} from './payments/asaas.mjs';
-import {createBilling} from './payments/billing.mjs';
+import {createBilling,outstandingInstallments} from './payments/billing.mjs';
 import {createOperations} from './operations.mjs';
 import { createDatabase } from './db.mjs';
 import { createFileStorage } from './storage.mjs';
@@ -16,7 +16,7 @@ import { randomBytes, scrypt, timingSafeEqual, createHash } from 'node:crypto';
 import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { dirname, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { period, pricedQuote, hoursLine, settle, financiallySettled } from './domain.mjs';
+import { period, pricedQuote, hoursLine, settle, financiallySettled, parseExtraItems, extraItemsText, readExtraItems, chargeHistory } from './domain.mjs';
 import { parseModelLink, lookupModel, licenseLevel } from './models.mjs';
 import { createGallery } from './gallery.mjs';
 import { createSchedule } from './schedule.mjs';
@@ -43,6 +43,7 @@ function integer(v,label,min,max){num(v,label,min,max);if(!Number.isInteger(v))f
 function optInt(v,label,min,max){if(v===undefined||v===null||v==='')return 0;return integer(v,label,min,max);}
 function materialDefaultRate(m,c){return Math.round(m.cost*(1+c.markup/100));}
 function quoteRates(b,c,m){const extraDefault=c.extra,materialDefault=materialDefaultRate(m,c);const extraRate=b.extraRate===undefined||b.extraRate===null||b.extraRate===''?extraDefault:integer(b.extraRate,'Valor da hora',0,10000000);const materialRate=b.materialRate===undefined||b.materialRate===null||b.materialRate===''?materialDefault:integer(b.materialRate,'Valor do filamento',0,10000000);return {extraRate,materialRate,custom:extraRate!==extraDefault||materialRate!==materialDefault?1:0};}
+function extraItemsInput(value){try{return parseExtraItems(value);}catch(e){fail(e.message);}}
 const brMoney=cents=>(cents/100).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 function creds(b){const email=str(b.email,'E-mail',150).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('Informe um e-mail válido.');if(typeof b.password!=='string'||b.password.length<6||b.password.length>200)fail('Use uma senha entre 6 e 200 caracteres.');return email;}
 async function event(id,text){(await run('INSERT INTO events(project_id,text,created) VALUES(?,?,?)',id,text,now()));}
@@ -53,14 +54,17 @@ async function body(req){if(req.parsedBody!==undefined)return req.parsedBody;con
 async function user(req){const token=readCookie(req,'maker_session');return token?(await one("SELECT u.id,u.email,u.name,u.role,u.family_id,t.user_id is_staff,(SELECT access_role FROM team_permissions WHERE user_id=u.id AND t.user_id IS NOT NULL) team_role,(SELECT whatsapp FROM guardian_contacts WHERE user_id=u.id) whatsapp,COALESCE(p.theme,'atelier') theme,COALESCE(p.avatar,'robot') avatar,COALESCE(p.experience,'guided') experience,CASE WHEN p.photo_key IS NOT NULL THEN 1 ELSE 0 END has_photo FROM sessions s JOIN users u ON u.id=s.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN user_preferences p ON p.user_id=u.id WHERE s.token=? AND s.expires>?",hash(token),Date.now())):null;}
 function authorized(u,roles){if(!u)fail('Entre na sua conta para continuar.',401);if(roles&&!roles.includes(u.role)&&!(roles.includes('admin')&&isAdmin(u)))fail('Esta ação é exclusiva do responsável autorizado.',403);}
 async function project(id,u){authorized(u);const p=(await one('SELECT * FROM projects WHERE id=?',id));if(!p)fail('Projeto não encontrado.',404);if(!isTeam(u)&&p.family_id!==u.family_id)fail('Projeto não encontrado.',404);return p;}
+function openPayment(row,u){if(!row)return null;const payment={method:row.method,installments:Number(row.installments)||1,amountCents:Number(row.amount_cents),status:row.status,checkoutUrl:row.checkout_url||null};if(isTeam(u)&&row.error_note)payment.error=row.error_note;return payment;}
+async function orderPayer(familyId){const primary=await one("SELECT u.name,u.email,c.whatsapp,a.document FROM family_automation a JOIN users u ON u.id=a.primary_guardian_id AND u.family_id=a.family_id AND u.role IN ('guardian','admin') LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE a.family_id=?",familyId);const g=primary||await one("SELECT u.name,u.email,c.whatsapp,'' AS document FROM users u LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE u.family_id=? AND u.role IN ('guardian','admin') ORDER BY u.id LIMIT 1",familyId);if(!g)fail('A família não tem responsável para emitir a cobrança.',409);return g;}
 const quota=createQuota(db);
 const familyBalance=id=>quota.balance(id);
-async function quote(p){const bal=await familyBalance(p.family_id),q=pricedQuote({minutes:p.minutes,grams:p.grams,available:bal.available,extraRate:p.extra_rate,materialRate:p.material_rate,bonusMinutes:p.bonus_minutes,bonusCents:p.bonus_cents});return {...q,balance:bal.available,balanceAfter:bal.available-q.included,hoursLine:hoursLine(q)};}
+async function quote(p){const bal=await familyBalance(p.family_id),q=pricedQuote({minutes:p.minutes,grams:p.grams,available:bal.available,extraRate:p.extra_rate,materialRate:p.material_rate,bonusMinutes:p.bonus_minutes,bonusCents:p.bonus_cents,extraItems:p.extra_items});return {...q,balance:bal.available,balanceAfter:bal.available-q.included,hoursLine:hoursLine(q)};}
 // ---- Ações sobre pedidos, usadas pela tela do pedido e pelas ações em massa da equipe ----
 async function cancelProject(p,u){(await run("UPDATE projects SET status='cancelled',included=0,charge=0,updated=? WHERE id=?",now(),p.id));(await event(p.id,'Pedido cancelado sem cobrança. Reserva de horas liberada.'));await run('DELETE FROM benefit_allocations WHERE project_id=?',p.id);await schedule.onCancelled(p,u);}
 async function finishProject(p,u,minutes,grams,note,notify=false){const real=await schedule.settle(p,minutes,grams),s=real||settle(p,minutes,grams);(await run("UPDATE projects SET status='ready',actual_minutes=?,actual_grams=?,used=?,charge=?,updated=? WHERE id=?",minutes,grams,s.used,s.charge,now(),p.id));const base=note||(real?'Impressão concluída. Peça à retirar; custo calculado pelo consumo real.':'Impressão concluída. Peça à retirar; consumo ajustado sem ultrapassar o orçamento.');(await event(p.id,base+(notify?' A família foi avisada no WhatsApp.':' Nenhum aviso foi enviado no WhatsApp.')));await schedule.onFinished(p,u,{notify:notify===true});}
-async function collectProject(p){if(p.status!=='ready')fail('A peça ainda não está à retirar.');if(!financiallySettled(p))fail('Concluído só é possível se o pedido foi pago ou marcado como isento/bonificado.');(await run("UPDATE projects SET status='completed',updated=? WHERE id=?",now(),p.id));(await event(p.id,'Retirada confirmada. Projeto concluído, com o financeiro resolvido. Nenhum aviso foi enviado no WhatsApp.'));}
-async function exemptProject(p,u){if(!canFinance(u))fail('Ação exclusiva do financeiro.',403);if(Number(p.paid))fail('O pagamento deste pedido já foi registrado.',409);if(Number(p.exempt))fail('Este pedido já está isento / bonificado.',409);if(!['review','question','approval','queued','printing','ready','completed'].includes(p.status))fail('Esta etapa não aceita isenção.',409);if(await one("SELECT id FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id))fail('Cancele a cobrança em andamento antes de marcar como isento.',409);(await run('UPDATE projects SET exempt=1,updated=? WHERE id=?',now(),p.id));(await event(p.id,'Marcado como isento / bonificado. Não gera cobrança no Asaas nem lembrete de pagamento.'));await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'finance.project.exempt',String(p.id),now());}
+async function collectProject(p,u){if(p.status!=='ready')fail('A peça ainda não está à retirar.');const at=now(),who=u?.name||'a equipe';if(financiallySettled(p)){(await run("UPDATE projects SET status='completed',picked_up_at=?,updated=? WHERE id=?",at,at,p.id));(await event(p.id,`Retirada confirmada por ${who}. Projeto concluído, com o financeiro resolvido. Nenhum aviso foi enviado no WhatsApp.`));}else{(await run("UPDATE projects SET status='picked',picked_up_at=?,updated=? WHERE id=?",at,at,p.id));(await event(p.id,`Retirada confirmada por ${who}; pagamento pendente.`));}}
+async function closePickup(id){const fresh=await one('SELECT * FROM projects WHERE id=?',id);if(fresh?.status==='picked'&&financiallySettled(fresh)){(await run("UPDATE projects SET status='completed',updated=? WHERE id=?",now(),id));(await event(id,'Pagamento resolvido. Pedido concluído.'));}}
+async function exemptProject(p,u){if(!canFinance(u))fail('Ação exclusiva do financeiro.',403);if(Number(p.paid))fail('O pagamento deste pedido já foi registrado.',409);if(Number(p.exempt))fail('Este pedido já está isento / bonificado.',409);if(!['review','question','approval','queued','printing','ready','picked','completed'].includes(p.status))fail('Esta etapa não aceita isenção.',409);if(await one("SELECT id FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review')",p.id))fail('Cancele a cobrança em andamento antes de marcar como isento.',409);(await run('UPDATE projects SET exempt=1,updated=? WHERE id=?',now(),p.id));(await event(p.id,'Marcado como isento / bonificado. Não gera cobrança no Asaas nem lembrete de pagamento.'));await closePickup(p.id);await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'finance.project.exempt',String(p.id),now());}
 // Só some o que nunca virou dinheiro nem impressão: sem cobrança, sem pagamento, sem vitrine.
 const deletable=['draft','review','question','approval','cancelled','failed'];
 async function deleteProject(p){
@@ -144,6 +148,8 @@ async function billingRequest(req,res,path){
 // from this cache, so the license and author stored with the order come from the site, not from the browser.
 const modelCache=new Map(),modelLookups=new Map();
 const modelColumns='CASE WHEN ml.image_key IS NULL THEN 0 ELSE 1 END model_image,ml.site model_site,ml.license model_license,ml.license_checked_at';
+const openBillWhere="bc.project_id=p.id AND bc.status IN ('creating','pending','needs_review')";
+const openBillColumns=`(SELECT bc.method FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_method,(SELECT bc.installments FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_installments,(SELECT bc.status FROM billing_contracts bc WHERE ${openBillWhere} ORDER BY bc.created DESC LIMIT 1) bill_status,(SELECT 1 FROM billing_contracts bc WHERE ${openBillWhere} LIMIT 1) bill_open,`;
 async function modelPreview(req,res){
  validateRequest(req);res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');
  const u=await db.withRequest(()=>user(req));authorized(u);if(req.method!=='POST')fail('Rota não encontrada.',404);
@@ -230,7 +236,7 @@ async function handle(req,res){
       const team=isTeam(u),fid=u.family_id;
       const scoped=(sql,clause='family_id')=>({sql:sql+(team?'':' WHERE '+clause+'=?'),params:team?[]:[fid]});
       const data=await db.snapshot({
-        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,p.bonus_minutes,p.bonus_cents,(SELECT 1 FROM billing_contracts bc WHERE bc.project_id=p.id AND bc.status IN (\'creating\',\'pending\',\'needs_review\') LIMIT 1) bill_open,f.name family_name,'+modelColumns+' FROM projects p JOIN families f ON f.id=p.family_id LEFT JOIN model_links ml ON ml.project_id=p.id ORDER BY p.created DESC':'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,p.bonus_minutes,p.bonus_cents,'+modelColumns+' FROM projects p LEFT JOIN model_links ml ON ml.project_id=p.id WHERE p.family_id=? ORDER BY p.created DESC',params:team?[]:[fid]},
+        projects:{sql:team?'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,p.bonus_minutes,p.bonus_cents,p.extra_items,'+openBillColumns+'f.name family_name,'+modelColumns+' FROM projects p JOIN families f ON f.id=p.family_id LEFT JOIN model_links ml ON ml.project_id=p.id ORDER BY p.created DESC':'SELECT p.id,p.family_id,p.name,p.participant,p.kind,p.status,p.created,p.updated,p.minutes,p.grams,p.material_rate,p.extra_rate,p.included,p.period,p.approved_at,p.actual_minutes,p.actual_grams,p.used,p.charge,p.paid,p.exempt,p.bonus_minutes,p.bonus_cents,p.extra_items,'+openBillColumns+modelColumns+' FROM projects p LEFT JOIN model_links ml ON ml.project_id=p.id WHERE p.family_id=? ORDER BY p.created DESC',params:team?[]:[fid]},
         queue:{sql:"SELECT p.id,p.name,p.family_id,p.status,p.minutes,p.approved_at,s.starts_at,s.ends_at,s.validated_at FROM projects p LEFT JOIN print_slots s ON s.project_id=p.id WHERE p.status IN ('queued','printing') ORDER BY CASE p.status WHEN 'printing' THEN 0 ELSE 1 END,COALESCE(s.starts_at,p.approved_at),p.id"},
         families:scoped('SELECT * FROM families','id'),
         members:{sql:"SELECT u.id,u.name,u.email,u.role,u.family_id,t.user_id is_staff,c.whatsapp FROM users u LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN guardian_contacts c ON c.user_id=u.id WHERE "+(team?'u.family_id IS NOT NULL':u.role==='guardian'?'u.family_id=?':'1=0'),params:!team&&u.role==='guardian'?[fid]:[]},
@@ -242,7 +248,7 @@ async function handle(req,res){
         membership:team&&canFinance(u)?{sql:"SELECT family_id,SUM(cents) cents,COUNT(*) n FROM cash_entries WHERE scope='club' AND kind='income' AND category='membership' AND voided_at IS NULL AND entry_date LIKE ? GROUP BY family_id",params:[period()+'-%']}:{sql:'SELECT 0 family_id,0 cents,0 n WHERE 1=0',params:[]},
         settings:{sql:'SELECT value FROM settings WHERE id=1'}
       });
-      for(const p of data.projects)if(p.model_site)p.license_level=licenseLevel(p.model_license);
+      for(const p of data.projects){p.extra_items=readExtraItems(p.extra_items);if(p.model_site)p.license_level=licenseLevel(p.model_license);}
       const group=rows=>{const map=new Map();for(const row of rows){if(!map.has(row.family_id))map.set(row.family_id,[]);map.get(row.family_id).push(row);}return map;};
       const byProject=group(data.projects),byMember=group(data.members),byDependent=group(data.participants),byBenefit=group(data.benefits),byAllocation=group(data.allocations);
       const balances=new Map(data.families.map(f=>[f.id,computeQuota(byProject.get(f.id)||[],f.allowance,byBenefit.get(f.id)||[],byAllocation.get(f.id)||[])]));
@@ -279,9 +285,9 @@ async function handle(req,res){
         try{await tx(async()=>{const p=await one('SELECT * FROM projects WHERE id=?',id);if(!p)fail('Pedido não encontrado.',404);
           if(b.action==='cancel'){if(!['draft','review','question','approval','queued'].includes(p.status))fail('Após iniciar a impressão, só pela tela do pedido.');await cancelProject(p,u);}
           else if(b.action==='finish'){if(p.status!=='queued')fail('Só pedidos que estão na fila.');await finishProject(p,u,Math.max(1,p.minutes),Math.max(0.1,p.grams),'Pedido finalizado pela equipe com o consumo orçado (impresso fora do fluxo da máquina). Peça à retirar.');}
-          else if(b.action==='collect')await collectProject(p);
+          else if(b.action==='collect')await collectProject(p,u);
           else if(b.action==='exempt')await exemptProject(p,u);
-          else if(b.action==='paid'){if(!['ready','completed'].includes(p.status))fail('Registre o pagamento após a conclusão da impressão.');await operations.recordProject(p,u);await run('UPDATE projects SET paid=1 WHERE id=?',id);await event(id,'Pagamento do projeto registrado pela equipe.');await schedule.onManualPaid(p,u);}
+          else if(b.action==='paid'){if(!['ready','picked','completed'].includes(p.status))fail('Registre o pagamento após a conclusão da impressão.');await operations.recordProject(p,u);await run('UPDATE projects SET paid=1 WHERE id=?',id);await event(id,'Pagamento do projeto registrado pela equipe.');await closePickup(id);await schedule.onManualPaid(p,u);}
           else await deleteProject(p);
         });done.push(id);}catch(e){skipped.push({id,reason:e.message||'Não foi possível.'});}
       }
@@ -290,7 +296,7 @@ async function handle(req,res){
     }
     const match=path.match(/^\/api\/projects\/(\d+)(?:\/(\w+))?$/);
     if(match){const id=Number(match[1]),action=match[2],p=(await project(id,u));
-      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]},model:{sql:'SELECT site,url,model_id,profile_id,title,author,license,license_checked_at,(SELECT name FROM users WHERE id=license_checked_by) license_checked_name,CASE WHEN image_key IS NULL THEN 0 ELSE 1 END has_image FROM model_links WHERE project_id=?',params:[id]}});const m=d.model[0];return json(res,{...p,quote:p.minutes?(await quote(p)):null,...d,model:m?{...m,license_level:licenseLevel(m.license)}:null,gallery:(await gallery.projectItem(id))||null,slot:await schedule.projectSlot(id,u)});}
+      if(!action&&method==='GET'){const d=await db.snapshot({messages:{sql:'SELECT m.*,u.name,u.role,t.user_id is_staff,x.media_name,x.proposal,x.answered_at,x.answer_note,CASE WHEN x.media_key IS NULL THEN 0 ELSE 1 END has_media FROM messages m JOIN users u ON u.id=m.user_id LEFT JOIN team_members t ON t.user_id=u.id LEFT JOIN message_extras x ON x.message_id=m.id WHERE m.project_id=? ORDER BY m.id',params:[id]},events:{sql:'SELECT * FROM events WHERE project_id=? ORDER BY id',params:[id]},files:{sql:'SELECT id,name,size FROM files WHERE project_id=? ORDER BY id',params:[id]},openCharge:{sql:"SELECT method,installments,amount_cents,status,checkout_url,error_note FROM billing_contracts WHERE project_id=? AND (status IN ('creating','pending','needs_review','past_due') OR "+outstandingInstallments+") ORDER BY created DESC LIMIT 1",params:[id]},model:{sql:'SELECT site,url,model_id,profile_id,title,author,license,license_checked_at,(SELECT name FROM users WHERE id=license_checked_by) license_checked_name,CASE WHEN image_key IS NULL THEN 0 ELSE 1 END has_image FROM model_links WHERE project_id=?',params:[id]}});const m=d.model[0],chargeRow=d.openCharge[0];delete d.openCharge;return json(res,{...p,extra_items:readExtraItems(p.extra_items),quote:p.minutes?(await quote(p)):null,...d,model:m?{...m,license_level:licenseLevel(m.license)}:null,gallery:(await gallery.projectItem(id))||null,slot:await schedule.projectSlot(id,u),payment:openPayment(chargeRow,u)});}
       if(method!=='POST')fail('Ação não encontrada.',404);
       const b=await body(req);
       if(!canOperate(u)&&!(u.family_id&&u.family_id===p.family_id)&&['edit','submit','file','message'].includes(action))fail('Acesso operacional necessário.',403);
@@ -298,9 +304,9 @@ async function handle(req,res){
         authorized(u,canOperate(u)?null:['admin']);
         const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
         const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),bal=await familyBalance(p.family_id),rates=quoteRates(b,c,m);
-        const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000);
+        const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000),extraItems=extraItemsInput(b.extraItems);
         if(bonusMinutes>minutes)fail('A bonificação de horas não pode passar do tempo do orçamento.');
-        const q=pricedQuote({minutes,grams,available:bal.available,extraRate:rates.extraRate,materialRate:rates.materialRate,bonusMinutes,bonusCents});
+        const q=pricedQuote({minutes,grams,available:bal.available,extraRate:rates.extraRate,materialRate:rates.materialRate,bonusMinutes,bonusCents,extraItems});
         return json(res,{...q,balance:bal.available,balanceAfter:bal.available-q.included,hoursLine:hoursLine(q)});
       }
       if(action==='edit'){
@@ -345,13 +351,37 @@ async function handle(req,res){
         const model=p.kind==='link'?(await one('SELECT license,license_checked_at FROM model_links WHERE project_id=?',id)):null;if(model&&licenseLevel(model.license)!=='open'&&!model.license_checked_at)fail('Confira a licença do modelo antes de preparar o orçamento.');
         const c=(await config()),m=c.materials.find(m=>m.name===b.material&&m.active);if(!m)fail('Escolha um material disponível.');
         const minutes=integer(b.minutes,'Tempo total',1,10000),grams=num(b.grams,'Material total',0.1,10000),note=str(b.note,'Orientação',1000),rates=quoteRates(b,c,m);
-        const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000);
+        const bonusMinutes=optInt(b.bonusMinutes,'Horas bonificadas',0,10000),bonusCents=optInt(b.bonusCents,'Bonificação em valor',0,100000000),extraItems=extraItemsInput(b.extraItems);
         if(bonusMinutes>minutes)fail('A bonificação de horas não pode passar do tempo do orçamento.');
-        (await run("UPDATE projects SET status='approval',minutes=?,grams=?,material=?,material_rate=?,extra_rate=?,quote_note=?,bonus_minutes=?,bonus_cents=?,custom_rates=?,updated=? WHERE id=?",minutes,grams,m.name,rates.materialRate,rates.extraRate,note,bonusMinutes,bonusCents,rates.custom,now(),id));(await event(id,`Orçamento preparado. Proposta à família: ${note.replace(/[.!?…]\s*$/,'')}.${rates.custom?` Valores ajustados pela equipe: hora ${brMoney(rates.extraRate)} e filamento ${brMoney(rates.materialRate)}/kg.`:''} Aguardando aprovação do responsável.`));{const fresh=(await project(id,u));await schedule.onQuoted(fresh,u,await quote(fresh));}
+        const listed=extraItemsText(extraItems);
+        (await run("UPDATE projects SET status='approval',minutes=?,grams=?,material=?,material_rate=?,extra_rate=?,quote_note=?,bonus_minutes=?,bonus_cents=?,custom_rates=?,extra_items=?,updated=? WHERE id=?",minutes,grams,m.name,rates.materialRate,rates.extraRate,note,bonusMinutes,bonusCents,rates.custom,JSON.stringify(extraItems),now(),id));(await event(id,`Orçamento preparado. Proposta à família: ${note.replace(/[.!?…]\s*$/,'')}.${rates.custom?` Valores ajustados pela equipe: hora ${brMoney(rates.extraRate)} e filamento ${brMoney(rates.materialRate)}/kg.`:''}${listed?` Itens adicionais: ${listed}.`:''} Aguardando aprovação do responsável.`));{const fresh=(await project(id,u));await schedule.onQuoted(fresh,u,await quote(fresh));}
       }
       else if(action==='license'){authorized(u,canOperate(u)?null:['admin']);if(b.checked!==true)fail('Confirme que conferiu a licença do modelo.');if(!['draft','review','question','approval','failed'].includes(p.status))fail('A licença é conferida antes do orçamento.');if(!(await run('UPDATE model_links SET license_checked_by=?,license_checked_at=? WHERE project_id=? AND license_checked_at IS NULL',u.id,now(),id)).changes)fail('Este pedido não tem licença para conferir.',409);(await event(id,'A equipe conferiu a licença do modelo e liberou a impressão.'));}
       else if(action==='approve'){
         if(!guardianOf(u)||p.family_id!==u.family_id)fail('Somente o responsável desta família pode aprovar.',403);(await tx(async ()=>{const current=(await project(id,u));if(current.status!=='approval')fail('Este orçamento não está mais disponível.');const q=(await quote(current));if(b.total!==q.total||b.included!==q.included)fail('O saldo mudou. Reabra o orçamento para conferir o valor atualizado.',409);await terms.require(current.family_id);await quota.reserve(id,current.family_id,q.included);(await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),now(),q.total,now(),id));(await event(id,`Orçamento aprovado. ${q.included} minutos reservados; valor máximo adicional R$ ${(q.total/100).toFixed(2)}.`));await schedule.onApproved(current,u);}));
+      }
+      else if(action==='approvefamily'){
+        // The guardian confirmed with the team (phone, WhatsApp, in person); the team records it and picks how the order is charged.
+        if(!canOperate(u))fail('Só a equipe registra a aprovação da família.',403);if(b.confirmed!==true)fail('Confirme que o responsável aprovou este orçamento.');
+        const payMethod=b.method==null||b.method===''?'pix_cash':b.method;if(payMethod!=='pix_cash'&&payMethod!=='card_installments')fail('Para o pedido, escolha PIX ou cartão.');
+        const installments=payMethod==='card_installments'?integer(b.installments??1,'Parcelas',1,12):undefined;
+        let charge=0;
+        await tx(async()=>{const current=await project(id,u);if(current.status!=='approval')fail('Este orçamento não está aguardando aprovação.');const q=await quote(current);if(b.total!==q.total||b.included!==q.included)fail('O saldo mudou. Reabra o pedido para conferir o valor atualizado.',409);
+         await terms.require(current.family_id);await quota.reserve(id,current.family_id,q.included);
+         await run("UPDATE projects SET status='queued',included=?,period=?,approved_at=?,charge=?,updated=? WHERE id=?",q.included,period(),now(),q.total,now(),id);
+         await event(id,`Orçamento aprovado (confirmação do responsável registrada pela equipe, por ${u.name}). ${q.included} minutos reservados; valor máximo adicional R$ ${(q.total/100).toFixed(2)}.${payMethod==='card_installments'?' Pagamento escolhido: link de cartão.':''}`);
+         await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'projects.approve.onbehalf',String(id),now());
+         await schedule.onApproved(current,u);
+         // With a card link the automatic PIX must not be issued in between.
+         if(payMethod==='card_installments'&&q.total>0&&!Number(current.exempt))await run('UPDATE print_slots SET charged_cents=?,updated=? WHERE project_id=?',q.total,now(),id);
+         charge=q.total;});
+        if(payMethod!=='card_installments'||charge<=0||Number(p.exempt))return json(res,{ok:true});
+        try{const g=await orderPayer(p.family_id),count=Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',id)).n);
+         const created=await billing.create({familyId:p.family_id,projectId:id,purpose:'project',method:'card_installments',installments,requestKey:`order:${id}:${count+1}`,customer:{name:g.name,email:g.email,document:g.document||'',phone:g.whatsapp||''}},u);
+         await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',charge,now(),id);
+         await event(id,chargeHistory({cents:created.amountCents,method:created.method,installments:created.installments,whatsapp:created.whatsapp}));
+         return json(res,{ok:true,charge:{...created,issued:true}});}
+        catch(e){const error=String(e?.message||'Não foi possível gerar o link de cartão.').slice(0,300);await run('UPDATE print_slots SET charge_error=?,updated=? WHERE project_id=?',error,now(),id).catch(()=>{});return json(res,{ok:true,charge:{issued:false,error:`Aprovação registrada, mas o link de cartão não saiu: ${error} Use "Gerar link de pagamento" no pedido.`}});}
       }
       else if(action==='revise'){if(!guardianOf(u)||p.family_id!==u.family_id)fail('Somente o responsável desta família pode alterar a aprovação.',403);if(p.status!=='approval')fail('Não há orçamento aguardando aprovação.');(await run("UPDATE projects SET status='review',updated=? WHERE id=?",now(),id));(await event(id,'Responsável solicitou uma alteração no orçamento.'));}
       else if(action==='cancel'){authorized(u,canOperate(u)?null:['guardian']);if(!canOperate(u)&&p.family_id!==u.family_id)fail('Ação exclusiva da sua família.',403);if(!['draft','review','question','approval','queued'].includes(p.status))fail('Após iniciar a impressão, converse com a equipe.');await cancelProject(p,u);}
@@ -359,9 +389,50 @@ async function handle(req,res){
       else if(action==='start'){authorized(u,canOperate(u)?null:['admin']);if(p.status!=='queued'||b.checked!==true)fail('Confira a máquina antes de iniciar.');if((await one("SELECT id FROM projects WHERE status='printing'")))fail('Já existe uma impressão em andamento.');await schedule.beforeStart(p);(await run("UPDATE projects SET status='printing',updated=? WHERE id=?",now(),id));(await event(id,'Máquina conferida pelo responsável. Impressão iniciada.'));await schedule.onStarted(p,u);}
       else if(action==='finish'){authorized(u,canOperate(u)?null:['admin']);if(!['printing','queued'].includes(p.status))fail('O projeto não está na fila nem em impressão.');const minutes=integer(b.minutes,'Tempo real',1,10000),grams=num(b.grams,'Material real',0.1,10000);await finishProject(p,u,minutes,grams,p.status==='queued'?'Pedido finalizado pela equipe (impresso fora do fluxo da máquina). Peça à retirar.':undefined,b.notify===true);}
       else if(action==='fail'){authorized(u,canOperate(u)?null:['admin']);if(p.status!=='printing')fail('O projeto não está em impressão.');const reason=str(b.reason,'Motivo',1000),lost=b.grams===undefined||b.grams===null||b.grams===''?0:num(Number(b.grams),'Material gasto',0,10000);(await run("UPDATE projects SET status='failed',included=0,used=0,charge=0,updated=? WHERE id=?",now(),id));(await event(id,`Impressão interrompida: ${reason}.${lost?` ${lost} g de filamento gastos na tentativa.`:''} Sem cobrança; horas liberadas. A equipe preparará um novo orçamento antes de tentar novamente.`));await schedule.onFailed(p,u,reason,lost);}
-      else if(action==='collect'){authorized(u,canOperate(u)?null:['guardian']);if(!canOperate(u)&&p.family_id!==u.family_id)fail('Ação exclusiva da sua família.',403);await collectProject(p);}
+      else if(action==='collect'){authorized(u,canOperate(u)?null:['guardian']);if(!canOperate(u)&&p.family_id!==u.family_id)fail('Ação exclusiva da sua família.',403);await collectProject(p,u);}
       else if(action==='exempt'){await exemptProject(p,u);}
-      else if(action==='paid'){authorized(u,canFinance(u)?null:['admin']);if(!['ready','completed'].includes(p.status))fail('Registre o pagamento após a conclusão da impressão.');await operations.recordProject(p,u);(await run('UPDATE projects SET paid=1 WHERE id=?',id));(await event(id,'Pagamento do projeto registrado pela equipe.'));await schedule.onManualPaid(p,u);}
+      else if(action==='paid'){authorized(u,canFinance(u)?null:['admin']);if(!['ready','picked','completed'].includes(p.status))fail('Registre o pagamento após a conclusão da impressão.');await operations.recordProject(p,u);(await run('UPDATE projects SET paid=1 WHERE id=?',id));(await event(id,'Pagamento do projeto registrado pela equipe.'));await closePickup(id);await schedule.onManualPaid(p,u);}
+      else if(action==='charge'){
+        if(!canFinance(u)&&!canOperate(u))fail('Ação exclusiva da equipe.',403);
+        if(Number(p.exempt))fail('Pedido isento / bonificado não gera cobrança.');
+        if(!['queued','printing','ready','picked','completed'].includes(p.status))fail('Este pedido ainda não tem valor para cobrar.');
+        const payMethod=b.method==null||b.method===''?'pix_cash':b.method;
+        if(payMethod!=='pix_cash'&&payMethod!=='card_installments')fail('Para o pedido, escolha PIX ou cartão.');
+        const installments=payMethod==='card_installments'?integer(b.installments??1,'Parcelas',1,12):undefined;
+        let replaced=null;
+        if(b.replace===true){
+         const open=await one("SELECT id,method,status FROM billing_contracts WHERE project_id=? AND status IN ('creating','pending','needs_review') ORDER BY created DESC LIMIT 1",id);
+         if(!open)fail('Não há cobrança em aberto para trocar.',409);if(open.status!=='pending')fail('Confira a cobrança em Cobranças antes de trocar.',409);if(open.method===payMethod)fail('A cobrança em aberto já usa esta forma de pagamento.',409);
+         await billing.cancel(open.id,u);replaced=open.method;
+        }
+        const g=await orderPayer(p.family_id),count=Number((await one('SELECT COUNT(*) n FROM billing_contracts WHERE project_id=?',id)).n);
+        const created=await billing.create({familyId:p.family_id,projectId:id,purpose:'project',method:payMethod,installments,requestKey:`order:${id}:${count+1}`,customer:{name:g.name,email:g.email,document:g.document||'',phone:g.whatsapp||''}},u);
+        await run('UPDATE print_slots SET charge_error=NULL,charged_cents=?,updated=? WHERE project_id=?',p.charge,now(),id);
+        await event(id,(replaced?`A equipe cancelou a cobrança ${replaced==='pix_cash'?'em PIX':'no cartão'} para trocar a forma de pagamento. `:'')+chargeHistory({cents:created.amountCents,method:created.method,installments:created.installments,whatsapp:created.whatsapp}));
+        return json(res,{...created,issued:true});
+      }
+      else if(action==='duplicate'){
+        // A repeat order: same family, piece, files and quote. It waits for the guardian's approval like any new quote.
+        if(!canOperate(u))fail('Só a equipe duplica pedidos.',403);if(!p.minutes||!p.material)fail('Só é possível duplicar um pedido que já tem orçamento.');
+        const keys=[];let copyId;
+        try{
+         const files=await all('SELECT name,path,size FROM files WHERE project_id=? ORDER BY id',id),model=await one('SELECT * FROM model_links WHERE project_id=?',id);
+         const copied=[];for(const f of files){const key=randomBytes(24).toString('hex');await storage.put(key,await storage.get(f.path));keys.push(key);copied.push({...f,path:key});}
+         const imageKey=model?.image_key?'model-'+randomBytes(24).toString('hex'):null;if(imageKey){await storage.put(imageKey,await storage.get(model.image_key));keys.push(imageKey);}
+         await tx(async()=>{
+          copyId=Number((await run("INSERT INTO projects(family_id,name,description,participant,kind,size,color,quantity,status,created,updated,minutes,grams,material,material_rate,extra_rate,quote_note,bonus_minutes,bonus_cents,custom_rates,extra_items) VALUES(?,?,?,?,?,?,?,?,'approval',?,?,?,?,?,?,?,?,?,?,?,?)",p.family_id,p.name,p.description,p.participant,p.kind,p.size,p.color,p.quantity,now(),now(),p.minutes,p.grams,p.material,p.material_rate,p.extra_rate,p.quote_note,p.bonus_minutes,p.bonus_cents,p.custom_rates,JSON.stringify(readExtraItems(p.extra_items)))).lastInsertRowid);
+          for(const f of copied)await run('INSERT INTO files(project_id,name,path,size) VALUES(?,?,?,?)',copyId,f.name,f.path,f.size);
+          if(model)await run('INSERT INTO model_links(project_id,site,url,model_id,profile_id,title,author,license,image_key,image_mime,license_checked_by,license_checked_at,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',copyId,model.site,model.url,model.model_id,model.profile_id,model.title,model.author,model.license,imageKey,imageKey?model.image_mime:null,model.license_checked_by,model.license_checked_at,now());
+          const listed=extraItemsText(readExtraItems(p.extra_items));
+          await event(copyId,`Pedido repetido pela equipe a partir do pedido #${String(id).padStart(3,'0')}, por ${u.name}. Mesma peça, quantidade e orçamento.`);
+          await event(copyId,`Orçamento preparado. Proposta à família: ${String(p.quote_note).replace(/[.!?…]\s*$/,'')}.${Number(p.custom_rates)?` Valores ajustados pela equipe: hora ${brMoney(p.extra_rate)} e filamento ${brMoney(p.material_rate)}/kg.`:''}${listed?` Itens adicionais: ${listed}.`:''} Aguardando aprovação do responsável.`);
+          await event(id,`A equipe repetiu este pedido no pedido #${String(copyId).padStart(3,'0')}.`);
+          await run('INSERT INTO audit_log(user_id,action,target,created) VALUES(?,?,?,?)',u.id,'projects.duplicate',`${id}->${copyId}`,now());
+         });
+        }catch(e){for(const k of keys)await storage.remove(k).catch(()=>{});throw e;}
+        {const fresh=await project(copyId,u);await schedule.onQuoted(fresh,u,await quote(fresh));}
+        return json(res,{ok:true,id:copyId});
+      }
       else fail('Ação não encontrada.',404);
       return json(res,{ok:true});
     }
